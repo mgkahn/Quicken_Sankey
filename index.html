@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Maxifi Overview</title>
+  <title>Sankey Overview</title>
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -80,8 +80,8 @@
 </head>
 <body>
   <header>
-    <h1>Maxifi Overview</h1>
-    <p>Reads <code>quicken_export.xlsx</code> (Category, Amount), uses negative Amount rows as expenses, and collapses categories under $1000 into Other.</p>
+    <h1 id="title">Sankey Overview - quicken_export.xlsx</h1>
+    <p>Reads <code id="file-label">quicken_export.xlsx</code> (Category, Amount), uses negative Amount rows as expenses, and collapses categories under $<span id="threshold-label">5000</span> into Other.</p>
   </header>
   <div class="controls">
     <label class="btn">
@@ -114,6 +114,8 @@
   <script>
     let MIN_VIZ = 5000;
     let FONT_SIZE = 10;
+    const titleEl = document.getElementById('title');
+    const fileLabelEl = document.getElementById('file-label');
     const statusEl = document.getElementById('status');
     const tooltip = document.getElementById('tooltip');
     const placeholder = document.getElementById('placeholder');
@@ -122,14 +124,36 @@
     const fontSizeInput = document.getElementById('font-size');
     const exportFormat = document.getElementById('export-format');
     const exportBtn = document.getElementById('export-btn');
+    let currentFileName = 'quicken_export.xlsx';
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
+    setCurrentFileName(currentFileName);
+    updateThresholdLabel();
+
+    function setCurrentFileName(name) {
+      currentFileName = name || 'quicken_export.xlsx';
+      if (titleEl) {
+        titleEl.textContent = `Sankey Overview - ${currentFileName}`;
+      }
+      if (fileLabelEl) {
+        fileLabelEl.textContent = currentFileName;
+      }
+      document.title = `Sankey Overview - ${currentFileName}`;
+    }
+
+    function updateThresholdLabel() {
+      if (document.getElementById('threshold-label')) {
+        document.getElementById('threshold-label').textContent = MIN_VIZ.toLocaleString('en-US');
+      }
+    }
 
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
-      statusEl.textContent = `Reading ${file.name}…`;
-      readFileAsArrayBuffer(file).then(renderFromArrayBuffer).catch(showError);
+      statusEl.textContent = `Reading ${file.name}...`;
+      readFileAsArrayBuffer(file)
+        .then(buffer => renderFromArrayBuffer(buffer, file.name))
+        .catch(showError);
     });
 
     function readFileAsArrayBuffer(file) {
@@ -146,7 +170,7 @@
         const resp = await fetch('quicken_export.xlsx');
         if (!resp.ok) throw new Error('Default workbook not found.');
         const buffer = await resp.arrayBuffer();
-        await renderFromArrayBuffer(buffer);
+        await renderFromArrayBuffer(buffer, 'quicken_export.xlsx');
       } catch (err) {
         statusEl.textContent = 'Pick a file to render.';
         setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
@@ -157,6 +181,7 @@
       const val = Number(thresholdInput.value);
       MIN_VIZ = Number.isFinite(val) && val >= 0 ? val : 5000;
       thresholdInput.value = MIN_VIZ;
+      updateThresholdLabel();
       if (window.__lastRows) {
         renderFromRows(window.__lastRows);
       }
@@ -188,12 +213,13 @@
       }
     });
 
-    async function renderFromArrayBuffer(buffer) {
+    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx') {
       try {
         const workbook = XLSX.read(buffer, { type: 'array' });
         const rows = extractRows(workbook);
         window.__lastRows = rows;
         renderFromRows(rows);
+        setCurrentFileName(fileName);
       } catch (err) {
         showError(err);
       }
