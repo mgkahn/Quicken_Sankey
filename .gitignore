@@ -1,0 +1,13 @@
+*.xlsx
+!sample_export.xlsx
+quicken_export.xlsx
+*.xls
+*.csv
+*.txt
+!requirements.txt
+.DS_Store
+**/.ipynb_checkpoints
+**/.venv
+**/__pycache__
+**/*.pyc
+

@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Maxifi Overview</title>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <style>
+    :root {
+      --bg: #f5f6fb;
+      --panel: #ffffff;
+      --border: #e5e7eb;
+      --text: #111827;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header { padding: 18px 24px 8px; }
+    h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.02em; }
+    p { margin: 0; color: var(--muted); font-size: 14px; }
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 24px 20px;
+    }
+    .btn {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 10px;
+    }
+    .status { color: var(--muted); font-size: 13px; }
+    #chart {
+      width: 95vw;
+      max-width: 1400px;
+      height: 95vh;
+      max-height: 900px;
+      min-height: 520px;
+      margin: 0 auto 28px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 18px;
+      box-shadow: 0 10px 32px rgba(15,23,42,0.08);
+      position: relative;
+      overflow: auto;
+    }
+    svg { width: 100%; height: 100%; }
+    .node rect { fill-opacity: 0.9; stroke: rgba(0,0,0,0.08); stroke-width: 1; rx: 4; }
+    .node text { fill: #0f172a; font-size: 10px; pointer-events: none; }
+    .link { fill: none; stroke-opacity: 0.35; }
+    .tooltip {
+      position: absolute;
+      background: rgba(255,255,255,0.98);
+      color: #0f172a;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+      pointer-events: none;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 10px 32px rgba(15, 23, 42, 0.16);
+      opacity: 0;
+      transform: translateY(-6px);
+      transition: opacity 0.12s ease, transform 0.12s ease;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Maxifi Overview</h1>
+    <p>Reads <code>quicken_export.xlsx</code> (Category, Amount), uses negative Amount rows as expenses, and collapses categories under $1000 into Other.</p>
+  </header>
+  <div class="controls">
+    <label class="btn">
+      Load another file
+      <input id="file-input" type="file" accept=".xlsx" style="display:none">
+    </label>
+    <span class="status" id="status">Loading quicken_export.xlsx…</span>
+    <label class="status" style="display:flex;align-items:center;gap:6px;">
+      Min threshold $
+      <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+    </label>
+    <label class="status" style="display:flex;align-items:center;gap:6px;">
+      Font size
+      <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+    </label>
+    <label class="status" style="display:flex;align-items:center;gap:6px;">
+      Export
+      <select id="export-format" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+        <option value="png">PNG</option>
+        <option value="svg">SVG</option>
+      </select>
+    </label>
+    <button id="export-btn" class="btn" type="button" style="font-size:12px;">Save chart</button>
+  </div>
+  <div id="chart">
+    <div id="placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:14px;text-align:center;padding:16px;">Preparing chart…</div>
+    <div class="tooltip" id="tooltip"></div>
+  </div>
+
+  <script>
+    let MIN_VIZ = 5000;
+    let FONT_SIZE = 10;
+    const statusEl = document.getElementById('status');
+    const tooltip = document.getElementById('tooltip');
+    const placeholder = document.getElementById('placeholder');
+    const fileInput = document.getElementById('file-input');
+    const thresholdInput = document.getElementById('min-viz');
+    const fontSizeInput = document.getElementById('font-size');
+    const exportFormat = document.getElementById('export-format');
+    const exportBtn = document.getElementById('export-btn');
+    thresholdInput.value = MIN_VIZ;
+    fontSizeInput.value = FONT_SIZE;
+
+    fileInput.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      statusEl.textContent = `Reading ${file.name}…`;
+      readFileAsArrayBuffer(file).then(renderFromArrayBuffer).catch(showError);
+    });
+
+    function readFileAsArrayBuffer(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (evt) => resolve(evt.target.result);
+        reader.onerror = (err) => reject(err);
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    async function loadDefaultWorkbook() {
+      try {
+        const resp = await fetch('quicken_export.xlsx');
+        if (!resp.ok) throw new Error('Default workbook not found.');
+        const buffer = await resp.arrayBuffer();
+        await renderFromArrayBuffer(buffer);
+      } catch (err) {
+        statusEl.textContent = 'Pick a file to render.';
+        setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
+      }
+    }
+
+    thresholdInput.addEventListener('change', () => {
+      const val = Number(thresholdInput.value);
+      MIN_VIZ = Number.isFinite(val) && val >= 0 ? val : 5000;
+      thresholdInput.value = MIN_VIZ;
+      if (window.__lastRows) {
+        renderFromRows(window.__lastRows);
+      }
+    });
+
+    fontSizeInput.addEventListener('change', () => {
+      const val = Number(fontSizeInput.value);
+      FONT_SIZE = Number.isFinite(val) && val >= 6 ? Math.min(val, 32) : 10;
+      fontSizeInput.value = FONT_SIZE;
+      if (window.__lastRows) {
+        renderFromRows(window.__lastRows);
+      }
+    });
+
+    exportBtn.addEventListener('click', async () => {
+      const svgEl = document.querySelector('#chart svg');
+      if (!svgEl) {
+        statusEl.textContent = 'Render the chart before exporting.';
+        return;
+      }
+      const fmt = exportFormat.value === 'svg' ? 'svg' : 'png';
+      statusEl.textContent = `Saving ${fmt.toUpperCase()}...`;
+      try {
+        await exportChart(svgEl, fmt);
+        statusEl.textContent = `Saved ${fmt.toUpperCase()} chart.`;
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = err.message || 'Failed to export chart.';
+      }
+    });
+
+    async function renderFromArrayBuffer(buffer) {
+      try {
+        const workbook = XLSX.read(buffer, { type: 'array' });
+        const rows = extractRows(workbook);
+        window.__lastRows = rows;
+        renderFromRows(rows);
+      } catch (err) {
+        showError(err);
+      }
+    }
+
+    function renderFromRows(rows) {
+      const tree = buildHierarchy(rows);
+      collapseSmallNodes(tree);
+      const sankeyData = treeToSankey(tree);
+      window.__lastSankeyData = sankeyData;
+      drawChart(sankeyData);
+      statusEl.textContent = `Rendered ${rows.length} expense rows (min threshold $${MIN_VIZ}).`;
+    }
+
+    function extractRows(workbook) {
+      const firstSheet = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[firstSheet];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+      const expenses = rows
+        .map(row => ({
+          category: String(row.Category || '').trim(),
+          amount: Number(row.Amount)
+        }))
+        .filter(r => r.category && Number.isFinite(r.amount) && r.amount < 0)
+        .map(r => ({ category: r.category, amount: Math.abs(r.amount) }));
+      if (!expenses.length) throw new Error('No expenses found. Ensure the sheet has negative Amount values.');
+      return expenses;
+    }
+
+    function makeNode(name) {
+      return { name, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [] };
+    }
+
+    function buildHierarchy(rows) {
+      const root = makeNode('Expenses');
+      for (const row of rows) {
+        const parts = row.category.split(':').map(p => p.trim()).filter(Boolean);
+        if (!parts.length) continue;
+        let current = root;
+        for (const part of parts) {
+          if (!current.children.has(part)) current.children.set(part, makeNode(part));
+          current = current.children.get(part);
+        }
+        current.value += row.amount;
+      }
+      propagateTotals(root);
+      root.value = Array.from(root.children.values()).reduce((sum, child) => sum + child.value, 0);
+      return root;
+    }
+
+    function propagateTotals(node) {
+      for (const child of node.children.values()) {
+        propagateTotals(child);
+        node.value += child.value;
+      }
+    }
+
+    function collapseSmallNodes(node) {
+      if (!node.children.size) return;
+      const children = Array.from(node.children.values());
+      const keepers = [];
+      const small = [];
+      for (const child of children) {
+        if (child.value < MIN_VIZ) {
+          small.push(child);
+        } else {
+          collapseSmallNodes(child);
+          keepers.push(child);
+        }
+      }
+      if (small.length >= 2) {
+        const otherValue = small.reduce((sum, c) => sum + c.value, 0);
+        const otherNode = makeNode('Other');
+        otherNode.value = otherValue;
+        otherNode.aggregated = true;
+        otherNode.aggregatedDetails = small.map(c => ({ name: c.name, value: c.value }));
+        keepers.push(otherNode);
+      } else if (small.length === 1) {
+        // Do not aggregate or recurse a lone small node; keep it as-is
+        keepers.push(small[0]);
+      }
+      const ordered = keepers.sort((a, b) => b.value - a.value);
+      node.children = new Map(ordered.map((c, idx) => [`${c.name}_${idx}`, c]));
+    }
+
+    function treeToSankey(root) {
+      const nodes = [];
+      const links = [];
+
+      function addNode(node, depth) {
+        const idx = nodes.length;
+        nodes.push({
+          name: node.name,
+          value: node.value,
+          aggregated: node.aggregated,
+          aggregatedDetails: node.aggregatedDetails ? [...node.aggregatedDetails] : [],
+          depth
+        });
+        return idx;
+      }
+
+      function walk(node, depth, parentIndex = null) {
+        const index = addNode(node, depth);
+        if (parentIndex !== null) {
+          links.push({
+            source: parentIndex,
+            target: index,
+            value: node.value,
+            aggregatedDetails: node.aggregated ? node.aggregatedDetails : null
+          });
+        }
+        const childEntries = Array.from(node.children.values()).sort((a, b) => a.name.localeCompare(b.name));
+        for (const child of childEntries) {
+          walk(child, depth + 1, index);
+        }
+      }
+      walk(root, 0, null);
+      return { nodes, links };
+    }
+
+    function drawChart({ nodes, links }) {
+      const container = document.getElementById('chart');
+      container.querySelectorAll('svg').forEach(el => el.remove());
+
+      const width = Math.max(1600, Math.min(1200, container.clientWidth - 12));
+      const height = Math.max(800, Math.min(container.clientHeight, window.innerHeight - 140));
+      const svg = d3.select(container)
+        .append('svg')
+        .attr('width', width)
+        .attr('height', height)
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .attr('preserveAspectRatio', 'xMidYMid meet');
+
+      const sankey = d3.sankey()
+        .nodeId((d, i) => i)
+        .nodeWidth(12)
+        .nodePadding(70)
+        .extent([[10, 10], [width - 10, height - 10]])
+        .nodeAlign(d3.sankeyLeft)
+        // Let d3 find the best order to reduce crossings
+        .nodeSort(null)
+        .linkSort(null)
+        .iterations(64);
+
+      const graph = sankey({
+        nodes: nodes.map(d => Object.assign({}, d)),
+        links: links.map(d => Object.assign({}, d))
+      });
+
+      enforceValueHeights(graph, height);
+      const newHeight = Math.max(
+        height,
+        d3.max(graph.nodes, d => d.y1 || 0) + 20
+      );
+      svg
+        .attr('height', newHeight)
+        .attr('viewBox', `0 0 ${width} ${newHeight}`);
+
+      const color = d3.scaleOrdinal(d3.schemeCategory10);
+      const formatValue = d3.format(',.0f');
+
+      const link = svg.append('g')
+        .attr('fill', 'none')
+        .selectAll('path')
+        .data(graph.links)
+        .join('path')
+        .attr('class', 'link')
+        .attr('d', stackedLink)
+        .attr('stroke', d => color(d.target.index))
+        .attr('stroke-width', d => Math.max(1, d.width))
+        .on('mousemove', (event, d) => showTooltip(event, d, formatValue))
+        .on('mouseleave', hideTooltip);
+
+      const node = svg.append('g')
+        .selectAll('g')
+        .data(graph.nodes)
+        .join('g')
+        .attr('class', 'node')
+        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+
+      node.append('rect')
+        .attr('height', d => d.y1 - d.y0)
+        .attr('width', d => d.x1 - d.x0)
+        .attr('fill', d => color(d.index));
+
+      node.append('text')
+        .attr('x', d => d.name === 'Expenses' ? (d.x1 - d.x0) + 6 : -6)
+        .attr('y', d => (d.y1 - d.y0) / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', d => d.name === 'Expenses' ? 'start' : 'end')
+        .style('font-size', `${FONT_SIZE}px`)
+        .text(d => `${d.name}: $${formatValue(d.value)} USD`);
+
+      window.__lastSvg = svg.node();
+      setPlaceholder('');
+    }
+
+    async function exportChart(svgEl, format) {
+      if (format === 'svg') {
+        const svgString = serializeSvg(svgEl);
+        const blob = new Blob([svgString], { type: 'image/svg+xml' });
+        await saveBlob(blob, 'sankey.svg', 'image/svg+xml');
+        return;
+      }
+
+      const { width, height } = getSvgSize(svgEl);
+      const svgString = serializeSvg(svgEl);
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(svgBlob);
+
+      await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(img, 0, 0, width, height);
+          canvas.toBlob(async (blob) => {
+            URL.revokeObjectURL(url);
+            if (!blob) {
+              reject(new Error('Unable to create PNG blob.'));
+              return;
+            }
+            try {
+              await saveBlob(blob, 'sankey.png', 'image/png');
+              resolve();
+            } catch (err) {
+              reject(err);
+            }
+          }, 'image/png');
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(url);
+          reject(new Error('Failed to load SVG for export.'));
+        };
+        img.src = url;
+      });
+    }
+
+    function serializeSvg(svgEl) {
+      const clone = svgEl.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+
+      // Inline computed styles so exported SVG/PNG matches on-screen colors
+      const srcNodes = svgEl.querySelectorAll('*');
+      const dstNodes = clone.querySelectorAll('*');
+      srcNodes.forEach((node, idx) => {
+        const target = dstNodes[idx];
+        if (!target) return;
+        const styles = getComputedStyle(node);
+        target.style.fontSize = styles.fontSize;
+        target.style.fontFamily = styles.fontFamily;
+        target.style.fill = styles.fill;
+        target.style.fillOpacity = styles.fillOpacity;
+        target.style.stroke = styles.stroke;
+        target.style.strokeWidth = styles.strokeWidth;
+        target.style.strokeOpacity = styles.strokeOpacity;
+        target.style.opacity = styles.opacity;
+      });
+
+      const pageStyle = document.querySelector('style');
+      if (pageStyle) {
+        const defsStyle = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+        defsStyle.textContent = pageStyle.textContent;
+        clone.insertBefore(defsStyle, clone.firstChild);
+      }
+
+      return new XMLSerializer().serializeToString(clone);
+    }
+
+    function getSvgSize(svgEl) {
+      const viewBox = svgEl.getAttribute('viewBox');
+      if (viewBox) {
+        const parts = viewBox.split(/\s+/).map(Number);
+        if (parts.length === 4 && parts.every(Number.isFinite)) {
+          return { width: parts[2], height: parts[3] };
+        }
+      }
+      const width = svgEl.width?.baseVal?.value || svgEl.getBoundingClientRect().width || 1200;
+      const height = svgEl.height?.baseVal?.value || svgEl.getBoundingClientRect().height || 800;
+      return { width, height };
+    }
+
+    async function saveBlob(blob, defaultName, mimeType) {
+      if (window.showSaveFilePicker) {
+        const ext = mimeType === 'image/svg+xml' ? '.svg' : '.png';
+        const handle = await window.showSaveFilePicker({
+          suggestedName: defaultName,
+          types: [{
+            description: mimeType === 'image/svg+xml' ? 'SVG Image' : 'PNG Image',
+            accept: { [mimeType]: [ext] }
+          }]
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = defaultName;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      }
+    }
+
+    function enforceValueHeights(graph, height) {
+      const padding = 8;
+      const byDepth = d3.group(graph.nodes, d => d.depth);
+      const available = Math.max(120, height - 30);
+
+      const inflow = new Map();
+      const outflow = new Map();
+      graph.links.forEach(l => {
+        const s = l.source.index;
+        const t = l.target.index;
+        outflow.set(s, (outflow.get(s) || 0) + l.value);
+        inflow.set(t, (inflow.get(t) || 0) + l.value);
+      });
+
+      const rootIdx = graph.nodes.findIndex(n => n.name === 'Expenses');
+
+      function desiredValue(node, idx) {
+        if (idx === rootIdx) return outflow.get(idx) || node.value || 1e-6;
+        const inVal = inflow.get(idx);
+        return (inVal != null ? inVal : node.value || 1e-6);
+      }
+
+      let scale = 1;
+      const scaleCandidates = [];
+      byDepth.forEach(list => {
+        const total = d3.sum(list, d => desiredValue(d, d.index)) || 1e-6;
+        const needed = total + padding * (list.length + 1);
+        scaleCandidates.push(available / needed);
+      });
+      if (scaleCandidates.length) scale = Math.min(...scaleCandidates);
+      scale = Math.min(scale, 1);
+
+      byDepth.forEach(list => {
+        list.sort((a, b) => a.y0 - b.y0);
+        let cursor = 10;
+        list.forEach(n => {
+          const h = Math.max(2, desiredValue(n, n.index) * scale);
+          n.y0 = cursor;
+          n.y1 = cursor + h;
+          cursor = n.y1 + padding;
+        });
+      });
+
+      graph.links.forEach(l => {
+        l.width = Math.max(1, l.value * scale);
+      });
+
+      // Sort links globally by source then target to keep consistent stacking and minimize crossings
+      graph.links.sort((a, b) => {
+        if (a.source.y0 !== b.source.y0) return a.source.y0 - b.source.y0;
+        return a.target.y0 - b.target.y0;
+      });
+
+      const bySource = d3.group(graph.links, l => l.source.index);
+      bySource.forEach((ls, sIdx) => {
+        const node = graph.nodes[sIdx];
+        ls.sort((a, b) => a.target.y0 - b.target.y0);
+        let cursor = node.y0;
+        ls.forEach(l => {
+          l.y0 = cursor + l.width / 2;
+          cursor += l.width;
+        });
+      });
+
+      const byTarget = d3.group(graph.links, l => l.target.index);
+      byTarget.forEach((ls, tIdx) => {
+        const node = graph.nodes[tIdx];
+        ls.sort((a, b) => a.source.y0 - b.source.y0);
+        let cursor = node.y0;
+        ls.forEach(l => {
+          l.y1 = cursor + l.width / 2;
+          cursor += l.width;
+        });
+      });
+    }
+
+    function showTooltip(event, d, formatValue) {
+      const source = d.source.name;
+      const target = d.target.name;
+      const base = `${source} → ${target}: $${formatValue(d.value)} USD`;
+      const detail = d.aggregatedDetails && d.aggregatedDetails.length
+        ? '\n' + d.aggregatedDetails.map(x => `• ${x.name}: $${formatValue(x.value)}`).join('\n')
+        : '';
+      tooltip.textContent = base + detail;
+      tooltip.style.opacity = 1;
+      tooltip.style.transform = 'translate(0, 0)';
+      const { clientX, clientY } = event;
+      const rect = document.getElementById('chart').getBoundingClientRect();
+      const x = clientX - rect.left + document.getElementById('chart').scrollLeft;
+      const y = clientY - rect.top + document.getElementById('chart').scrollTop;
+      tooltip.style.left = `${x + 4}px`;
+      tooltip.style.top = `${y + 4}px`;
+    }
+
+    function stackedLink(d) {
+      // Custom path that keeps midpoints separated to reduce overlap
+      const x0 = d.source.x1;
+      const x1 = d.target.x0;
+      const y0 = d.y0;
+      const y1 = d.y1;
+      const xi = d3.interpolateNumber(x0, x1);
+      const xA = xi(0.25);
+      const xB = xi(0.75);
+      return `M${x0},${y0}C${xA},${y0} ${xB},${y1} ${x1},${y1}`;
+    }
+
+    function hideTooltip() {
+      tooltip.style.opacity = 0;
+      tooltip.style.transform = 'translateY(-6px)';
+    }
+
+    function showError(err) {
+      console.error(err);
+      statusEl.textContent = err.message || 'Failed to render.';
+      setPlaceholder('Unable to render chart. Please use “Load another file” or serve this directory (e.g. `python -m http.server 8000`).');
+    }
+
+    function setPlaceholder(text) {
+      if (!placeholder) return;
+      placeholder.textContent = text;
+      placeholder.style.display = text ? 'flex' : 'none';
+    }
+
+    window.addEventListener('resize', () => {
+      if (window.__lastSankeyData) drawChart(window.__lastSankeyData);
+    });
+
+    loadDefaultWorkbook();
+  </script>
+</body>
+</html>
