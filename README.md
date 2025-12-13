@@ -19,17 +19,22 @@ Uses a D3-based index.html file that reads an XLSX export from Quicken transacti
 3. Allows for dynamic setting of MIN_VIZ variable, which determines the lowest amount to be displayed. Any flows with amount less than MIN_VIZ is rolled up into a aggregated "Other" node. The exception is if there is only a single node to be aggregated, that node is displayed.
 4. Allows for dynamic setting of font size.
 5. Downloads Sankey chart as SVG or PNG into browser download folder.
+6. Downloads node-level raw data rows as CSV into browser download folder.
 
 ### Limitations
-1. Reader is hard coded to read Quicken XLSX file named "quicken_export.xlsx"
+1. Reader initial default filename is "quicken_export.xlsx" but can be changed using "Load another file" button.
 2. Reader explicilty uses only "Category" and "Amount" columns. All other extracted columns are ignored
-3. The current rendering does not eliminate all flow/link overlaps. But I gave up trying to completely eliminate them.
+3. The current rendering does not eliminate all flow/link overlaps. I gave up trying to completely eliminate them.
+4. Read acknowledgements
+
+### Acknowledgements
+I am not an HTML/CSS/JS programmer. I am an SQL programmer. I used OpenAI's ChatGPT via VSC's CODEX plugin to write all of this code. It was a real struggle getting the tool to create the program that I wanted. I had to start over multiple times. And it often generated invalid code. Even so, since I did not have even basic HTML/CSS/JS knowledge, I could not have created this tool without ChatGPT. That said, I am sure there is a lot of redundant and/or inefficient and/or convoluted code that a skilled web programmer could greatly improved. If you are one of these people, please feel free to dig in and clean up the ChatGPT-generated code. I simply am too ignorant of this environment to do this myself.
 
 ### TODOs
 1. See issues tracker.
 
 ## Brief instructions
-The input reader is very specific to Quicken's output format, especially how category hierachies are represented as colon-delimited string in a Category column. Only uses Category and Amount fields (which are also hard-coded). The initial file name is also hard coded as quicken_export.xlsx but this can be changed using the "Load another file" button in upper left side. I made no attempt to generalize the input reader.
+The input reader is very specific to Quicken's output format, especially how category hierachies are represented as a colon-delimited string in a Category column. Only uses Category and Amount fields (column names are hard-coded). The initial file name is also hard coded as quicken_export.xlsx but this can be changed using the "Load another file" button in upper left side. I made no attempt to generalize the input reader.
 
 1. To create the required XLSX in Quicken, create a custom Transaction report. I use the following options for my output:
    - Date Range (top dialog box): Year to Date
@@ -42,13 +47,17 @@ The input reader is very specific to Quicken's output format, especially how cat
    - Advanced: Transfer: Exclude all ; Subcategories: Show all
 
 2. Run the report. In Quicken, report should look like this:
+
 ![alt text](images/QuickenReport.png)
-3. Export the report as XLSX and save in the same directory as the index.html file. Must save the XLSX as quicken_export.xlsx as this filename is hard coded.
+
+3. Export the report as XLSX and save in the same directory as the index.html file. The default filename expected by the reader is quicken_export.xlsx
+
 ![alt text](images/QuickenExport.png)
 
 **WARNING: Quicken adds header and footer rows for titles and summary data to the XLSX that must be MANUALLY removed. The final spreadsheet should only have one workbook, Row 1 as headers, Rows2-N as single transactions. See quicken_sample.xlsx for final format.**
 
 4. Save the modified XLSX.
+
 5. Start the included Flask server in a separate Python virtual environment so the browser can fetch the XLSX:
    ```
    python -m venv .venv
@@ -78,4 +87,10 @@ The red arrow shows a category that also is less than the minimum threshold yet 
 ![alt text](images/Sankey_LowerThreshold.png)
 
 This screen shot shows changes due to lowering the minimum threshold to $1000. Nodes that previously were aggregated are now visible. Note that there are multiple nodes with amounts less than the threshold. These are not aggregated into an "Other" node because they are singleton nodes.
+
+Hovering over a flow/link shows source and target node plus amount, which is also readily discernable from the chart. Link hovering is more useful for "Other" links, which show all of the individual children nodes and their amounts that got rolled up into the "Other" node. At this time, there is no hovering behavior for data nodes.
+
+Clicking on any data node generates a popup table containing the raw data rows at this node and all children data nodes. All columns from the raw data file are included. The "download rows" button on the top right side of the table downloads the CSV into the browser's download folder.
+
+
 

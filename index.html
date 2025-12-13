@@ -76,6 +76,100 @@
       transition: opacity 0.12s ease, transform 0.12s ease;
       white-space: pre-line;
     }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.4);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      z-index: 20;
+    }
+    .modal {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
+      width: min(1100px, 96vw);
+      max-height: 85vh;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid #e5e7eb;
+      overflow: hidden;
+    }
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid #e5e7eb;
+      gap: 12px;
+    }
+    .modal-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin: 0;
+    }
+    .modal-subtitle {
+      margin: 4px 0 0;
+      color: #6b7280;
+      font-size: 13px;
+    }
+    .modal-close {
+      background: #f3f4f6;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      font-size: 18px;
+      color: #111827;
+    }
+    .modal-actions {
+      display: flex;
+      justify-content: flex-end;
+      padding: 12px 18px;
+      gap: 10px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .modal-table-wrap {
+      overflow: auto;
+      padding: 4px 18px 18px;
+    }
+    table.modal-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    table.modal-table thead {
+      position: sticky;
+      top: 0;
+      background: #f9fafb;
+      z-index: 1;
+    }
+    table.modal-table th,
+    table.modal-table td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid #e5e7eb;
+      white-space: nowrap;
+    }
+    table.modal-table td.category {
+      white-space: normal;
+    }
+    table.modal-table th:first-child,
+    table.modal-table td:first-child {
+      width: 64px;
+    }
+    table.modal-table th:last-child,
+    table.modal-table td:last-child {
+      text-align: right;
+    }
+    .modal-empty {
+      padding: 12px 0;
+      color: #9ca3af;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -111,7 +205,35 @@
     <div class="tooltip" id="tooltip"></div>
   </div>
 
-  <script>
+  <div class="modal-backdrop" id="details-backdrop">
+    <div class="modal">
+      <div class="modal-header">
+        <div>
+          <div class="modal-title" id="modal-title">Category details</div>
+          <div class="modal-subtitle" id="modal-subtitle"></div>
+        </div>
+        <button class="modal-close" id="modal-close" aria-label="Close details">&times;</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="download-rows" type="button">Download rows (CSV)</button>
+      </div>
+      <div class="modal-table-wrap">
+        <table class="modal-table">
+          <thead>
+            <tr id="modal-header-row">
+              <th>Row #</th>
+              <th>Category</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="modal-rows"></tbody>
+        </table>
+        <div class="modal-empty" id="modal-empty" style="display:none;">No rows available for this node.</div>
+      </div>
+    </div>
+  </div>
+
+<script>
     let MIN_VIZ = 5000;
     let FONT_SIZE = 10;
     const titleEl = document.getElementById('title');
@@ -124,11 +246,37 @@
     const fontSizeInput = document.getElementById('font-size');
     const exportFormat = document.getElementById('export-format');
     const exportBtn = document.getElementById('export-btn');
+    const modalBackdrop = document.getElementById('details-backdrop');
+    const modalTitle = document.getElementById('modal-title');
+    const modalSubtitle = document.getElementById('modal-subtitle');
+    const modalRowsBody = document.getElementById('modal-rows');
+    const modalHeaderRow = document.getElementById('modal-header-row');
+    const modalEmpty = document.getElementById('modal-empty');
+    const modalCloseBtn = document.getElementById('modal-close');
+    const downloadRowsBtn = document.getElementById('download-rows');
     let currentFileName = 'quicken_export.xlsx';
+    let modalRowsData = [];
+    let lastHeaders = [];
+    const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
     setCurrentFileName(currentFileName);
     updateThresholdLabel();
+
+    if (modalCloseBtn) {
+      modalCloseBtn.addEventListener('click', hideModal);
+    }
+    if (modalBackdrop) {
+      modalBackdrop.addEventListener('click', (e) => {
+        if (e.target === modalBackdrop) hideModal();
+      });
+    }
+    if (downloadRowsBtn) {
+      downloadRowsBtn.addEventListener('click', () => {
+        if (!modalRowsData.length) return;
+        downloadRowsCsv(modalRowsData, 'sankey_data.csv', lastHeaders);
+      });
+    }
 
     function setCurrentFileName(name) {
       currentFileName = name || 'quicken_export.xlsx';
@@ -139,6 +287,12 @@
         fileLabelEl.textContent = currentFileName;
       }
       document.title = `Sankey Overview - ${currentFileName}`;
+    }
+
+    function setModalHeaders(headers) {
+      if (!modalHeaderRow) return;
+      const cols = ['Row #', ...(headers || [])];
+      modalHeaderRow.innerHTML = cols.map(h => `<th>${escapeHtml(String(h || ''))}</th>`).join('');
     }
 
     function updateThresholdLabel() {
@@ -216,9 +370,10 @@
     async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx') {
       try {
         const workbook = XLSX.read(buffer, { type: 'array' });
-        const rows = extractRows(workbook);
-        window.__lastRows = rows;
-        renderFromRows(rows);
+        const { expenses, headers } = extractRows(workbook);
+        window.__lastRows = expenses;
+        lastHeaders = headers;
+        renderFromRows(expenses);
         setCurrentFileName(fileName);
       } catch (err) {
         showError(err);
@@ -234,23 +389,90 @@
       statusEl.textContent = `Rendered ${rows.length} expense rows (min threshold $${MIN_VIZ}).`;
     }
 
+    function normalizeCellValue(key, val) {
+      if (val instanceof Date) {
+        return formatDateFromDate(val);
+      }
+      if (typeof val === 'string' && /date/i.test(key)) {
+        const maybe = new Date(val);
+        if (!Number.isNaN(maybe.getTime())) {
+          return formatDateFromDate(maybe);
+        }
+      }
+      if (typeof val === 'number' && Number.isFinite(val) && /date/i.test(key)) {
+        const parsed = XLSX?.SSF?.parse_date_code ? XLSX.SSF.parse_date_code(val) : null;
+        if (parsed && parsed.y && parsed.m && parsed.d) {
+          return formatDateFromParts(parsed);
+        }
+      }
+      return val;
+    }
+
+    function formatDateFromDate(d) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const hasTime = d.getHours() || d.getMinutes() || d.getSeconds();
+      if (!hasTime) return `${y}-${m}-${day}`;
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      return `${y}-${m}-${day} ${hh}:${mm}:${ss}`;
+    }
+
+    function formatDateFromParts(p) {
+      const y = p.y;
+      const m = String(p.m || 1).padStart(2, '0');
+      const d = String(p.d || 1).padStart(2, '0');
+      const hasTime = p.H || p.M || p.S;
+      if (!hasTime) return `${y}-${m}-${d}`;
+      const hh = String(p.H || 0).padStart(2, '0');
+      const mm = String(p.M || 0).padStart(2, '0');
+      const ss = String(Math.floor(p.S || 0)).padStart(2, '0');
+      return `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+    }
+
+    function normalizeRow(row) {
+      const out = {};
+      Object.entries(row).forEach(([k, v]) => {
+        out[k] = normalizeCellValue(k, v);
+      });
+      return out;
+    }
+
     function extractRows(workbook) {
       const firstSheet = workbook.SheetNames[0];
       const sheet = workbook.Sheets[firstSheet];
-      const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-      const expenses = rows
-        .map(row => ({
-          category: String(row.Category || '').trim(),
-          amount: Number(row.Amount)
-        }))
+      const rowsRaw = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true, cellDates: true });
+      const headerRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true, cellDates: true });
+      const headers = Array.isArray(headerRows?.[0])
+        ? headerRows[0].filter(h => String(h || '').trim() !== '')
+        : (rowsRaw[0] ? Object.keys(rowsRaw[0]) : []);
+      const normalizedRows = rowsRaw.map(normalizeRow);
+      const expenses = normalizedRows
+        .map((row, idx) => {
+          const category = String(row.Category || '').trim();
+          const amount = Number(row.Amount);
+          return {
+            category,
+            amount,
+            rowNumber: idx + 1,
+            raw: row
+          };
+        })
         .filter(r => r.category && Number.isFinite(r.amount) && r.amount < 0)
-        .map(r => ({ category: r.category, amount: Math.abs(r.amount) }));
+        .map(r => ({
+          category: r.category,
+          amount: Math.abs(r.amount),
+          rowNumber: r.rowNumber,
+          raw: r.raw
+        }));
       if (!expenses.length) throw new Error('No expenses found. Ensure the sheet has negative Amount values.');
-      return expenses;
+      return { expenses, headers };
     }
 
     function makeNode(name) {
-      return { name, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [] };
+      return { name, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [], rows: [] };
     }
 
     function buildHierarchy(rows) {
@@ -264,6 +486,7 @@
           current = current.children.get(part);
         }
         current.value += row.amount;
+        current.rows.push(row);
       }
       propagateTotals(root);
       root.value = Array.from(root.children.values()).reduce((sum, child) => sum + child.value, 0);
@@ -274,6 +497,9 @@
       for (const child of node.children.values()) {
         propagateTotals(child);
         node.value += child.value;
+        if (child.rows && child.rows.length) {
+          node.rows.push(...child.rows);
+        }
       }
     }
 
@@ -296,6 +522,7 @@
         otherNode.value = otherValue;
         otherNode.aggregated = true;
         otherNode.aggregatedDetails = small.map(c => ({ name: c.name, value: c.value }));
+        otherNode.rows = small.flatMap(c => c.rows || []);
         keepers.push(otherNode);
       } else if (small.length === 1) {
         // Do not aggregate or recurse a lone small node; keep it as-is
@@ -316,6 +543,7 @@
           value: node.value,
           aggregated: node.aggregated,
           aggregatedDetails: node.aggregatedDetails ? [...node.aggregatedDetails] : [],
+          rows: node.rows ? [...node.rows] : [],
           depth
         });
         return idx;
@@ -398,7 +626,8 @@
         .data(graph.nodes)
         .join('g')
         .attr('class', 'node')
-        .attr('transform', d => `translate(${d.x0},${d.y0})`);
+        .attr('transform', d => `translate(${d.x0},${d.y0})`)
+        .on('click', (_, d) => showNodeDetails(d));
 
       node.append('rect')
         .attr('height', d => d.y1 - d.y0)
@@ -415,6 +644,80 @@
 
       window.__lastSvg = svg.node();
       setPlaceholder('');
+    }
+
+    function showNodeDetails(node) {
+      if (!node || !modalBackdrop) return;
+      const rows = Array.isArray(node.rows) ? [...node.rows] : [];
+      rows.sort((a, b) => {
+        const aNum = Number.isFinite(a.rowNumber) ? a.rowNumber : 0;
+        const bNum = Number.isFinite(b.rowNumber) ? b.rowNumber : 0;
+        return aNum - bNum;
+      });
+      modalRowsData = rows;
+      if (modalTitle) {
+        modalTitle.textContent = `${node.name}`;
+      }
+      if (modalSubtitle) {
+        const rowLabel = rows.length === 1 ? 'row' : 'rows';
+        modalSubtitle.textContent = `${rows.length} ${rowLabel} - Total $${formatNumber(node.value || 0)} USD`;
+      }
+      renderModalRows(rows, lastHeaders);
+      modalBackdrop.style.display = 'flex';
+    }
+
+    function renderModalRows(rows, headers = []) {
+      if (!modalRowsBody || !modalEmpty) return;
+      const effectiveHeaders = (headers && headers.length)
+        ? headers
+        : (rows[0]?.raw ? Object.keys(rows[0].raw) : []);
+      setModalHeaders(effectiveHeaders);
+      modalRowsBody.innerHTML = '';
+      if (!rows.length) {
+        modalEmpty.style.display = 'block';
+        return;
+      }
+      modalEmpty.style.display = 'none';
+      const frag = document.createDocumentFragment();
+      rows.forEach((row, idx) => {
+        const tr = document.createElement('tr');
+        const rowNum = idx + 1; // display rows as 1-based within the modal
+        const cells = [rowNum, ...effectiveHeaders.map(h => row.raw ? row.raw[h] : row[h])];
+        tr.innerHTML = cells.map((val, cellIdx) => {
+          const safe = escapeHtml(val == null ? '' : String(val));
+          return `<td${cellIdx === 1 ? ' class=\"category\"' : ''}>${safe}</td>`;
+        }).join('');
+        frag.appendChild(tr);
+      });
+      modalRowsBody.appendChild(frag);
+    }
+
+    function hideModal() {
+      if (modalBackdrop) modalBackdrop.style.display = 'none';
+      modalRowsData = [];
+    }
+
+    function downloadRowsCsv(rows, filename = 'sankey_data.csv', headers = lastHeaders) {
+      if (!rows.length) return;
+      const effectiveHeaders = (headers && headers.length)
+        ? headers
+        : (rows[0]?.raw ? Object.keys(rows[0].raw) : []);
+      const lines = [];
+      lines.push(['row_number', ...effectiveHeaders].map(csvEscape).join(','));
+      rows.forEach((r, idx) => {
+        const rowNum = idx + 1;
+        const values = effectiveHeaders.map(h => csvEscape(r.raw ? r.raw[h] : r[h]));
+        lines.push([rowNum, ...values].join(','));
+      });
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
     }
 
     async function exportChart(svgEl, format) {
@@ -508,11 +811,19 @@
 
     async function saveBlob(blob, defaultName, mimeType) {
       if (window.showSaveFilePicker) {
-        const ext = mimeType === 'image/svg+xml' ? '.svg' : '.png';
+        const ext = mimeType === 'image/svg+xml'
+          ? '.svg'
+          : mimeType === 'image/png'
+            ? '.png'
+            : (defaultName.includes('.') ? defaultName.slice(defaultName.lastIndexOf('.')) : '.csv');
         const handle = await window.showSaveFilePicker({
           suggestedName: defaultName,
           types: [{
-            description: mimeType === 'image/svg+xml' ? 'SVG Image' : 'PNG Image',
+            description: mimeType === 'image/svg+xml'
+              ? 'SVG Image'
+              : mimeType === 'image/png'
+                ? 'PNG Image'
+                : 'Download',
             accept: { [mimeType]: [ext] }
           }]
         });
@@ -605,6 +916,28 @@
           cursor += l.width;
         });
       });
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/[&<>\"']/g, (ch) => {
+        switch (ch) {
+          case '&': return '&amp;';
+          case '<': return '&lt;';
+          case '>': return '&gt;';
+          case '\"': return '&quot;';
+          case '\'': return '&#39;';
+          default: return ch;
+        }
+      });
+    }
+
+    function csvEscape(val) {
+      if (val == null) return '';
+      const str = String(val);
+      if (/[\",\n]/.test(str)) {
+        return `"${str.replace(/\"/g, '""')}"`;
+      }
+      return str;
     }
 
     function showTooltip(event, d, formatValue) {
