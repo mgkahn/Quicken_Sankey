@@ -28,8 +28,19 @@
     .controls {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 12px;
       padding: 12px 24px 20px;
+    }
+    .controls-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .controls-right {
+      display: flex;
+      align-items: center;
     }
     .btn {
       background: var(--panel);
@@ -178,30 +189,35 @@
     <p>Reads <code id="file-label">quicken_export.xlsx</code> (Category, Amount), uses negative Amount rows as expenses, and collapses categories under $<span id="threshold-label">5000</span> into Other.</p>
   </header>
   <div class="controls">
-    <label class="btn">
-      Load another file
-      <input id="file-input" type="file" accept=".xlsx" style="display:none">
-    </label>
-    <span class="status" id="status">Loading quicken_export.xlsx…</span>
-    <label class="status" style="display:flex;align-items:center;gap:6px;">
-      Min threshold $
-      <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-    </label>
-    <label class="status" style="display:flex;align-items:center;gap:6px;">
-      Font size
-      <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-    </label>
-    <label class="status" style="display:flex;align-items:center;gap:6px;">
-      Export
-      <select id="export-format" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-        <option value="png">PNG</option>
-        <option value="svg">SVG</option>
-      </select>
-    </label>
-    <button id="export-btn" class="btn" type="button" style="font-size:12px;">Save chart</button>
+    <div class="controls-left">
+      <label class="btn">
+        Load another file
+        <input id="file-input" type="file" accept=".xlsx" style="display:none">
+      </label>
+      <span class="status" id="status">Loading quicken_export.xlsx...</span>
+      <label class="status" style="display:flex;align-items:center;gap:6px;">
+        Min threshold $
+        <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+      </label>
+      <label class="status" style="display:flex;align-items:center;gap:6px;">
+        Font size
+        <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+      </label>
+      <label class="status" style="display:flex;align-items:center;gap:6px;">
+        Export
+        <select id="export-format" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+          <option value="png">PNG</option>
+          <option value="svg">SVG</option>
+        </select>
+      </label>
+      <button id="export-btn" class="btn" type="button" style="font-size:12px;">Save chart</button>
+    </div>
+    <div class="controls-right">
+      <button id="reset-suppressed" class="btn" type="button" style="font-size:12px;">Reset suppressed rows</button>
+    </div>
   </div>
   <div id="chart">
-    <div id="placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:14px;text-align:center;padding:16px;">Preparing chart…</div>
+    <div id="placeholder" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#9ca3af;font-size:14px;text-align:center;padding:16px;">Preparing chart...</div>
     <div class="tooltip" id="tooltip"></div>
   </div>
 
@@ -246,6 +262,7 @@
     const fontSizeInput = document.getElementById('font-size');
     const exportFormat = document.getElementById('export-format');
     const exportBtn = document.getElementById('export-btn');
+    const resetSuppressedBtn = document.getElementById('reset-suppressed');
     const modalBackdrop = document.getElementById('details-backdrop');
     const modalTitle = document.getElementById('modal-title');
     const modalSubtitle = document.getElementById('modal-subtitle');
@@ -257,6 +274,8 @@
     let currentFileName = 'quicken_export.xlsx';
     let modalRowsData = [];
     let lastHeaders = [];
+    let suppressedRowNumbers = new Set();
+    let baseRows = [];
     const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
@@ -275,6 +294,21 @@
       downloadRowsBtn.addEventListener('click', () => {
         if (!modalRowsData.length) return;
         downloadRowsCsv(modalRowsData, 'sankey_data.csv', lastHeaders);
+      });
+    }
+    if (resetSuppressedBtn) {
+      resetSuppressedBtn.addEventListener('click', () => {
+        if (!baseRows.length) {
+          statusEl.textContent = 'Load a file before resetting suppressed rows.';
+          return;
+        }
+        if (!suppressedRowNumbers.size) {
+          statusEl.textContent = 'No suppressed rows to reset.';
+          return;
+        }
+        suppressedRowNumbers.clear();
+        window.__suppressedRowNumbers = suppressedRowNumbers;
+        renderFromRows(baseRows);
       });
     }
 
@@ -319,6 +353,21 @@
       });
     }
 
+    function setBaseRows(rows) {
+      baseRows = Array.isArray(rows) ? rows.slice() : [];
+      suppressedRowNumbers = new Set();
+      window.__baseRows = baseRows;
+      window.__suppressedRowNumbers = suppressedRowNumbers;
+      window.__lastRows = baseRows;
+    }
+
+    function getActiveRows() {
+      if (!suppressedRowNumbers || !suppressedRowNumbers.size) {
+        return baseRows.slice();
+      }
+      return baseRows.filter(r => !suppressedRowNumbers.has(r.rowNumber));
+    }
+
     async function loadDefaultWorkbook() {
       try {
         const resp = await fetch('quicken_export.xlsx');
@@ -336,8 +385,8 @@
       MIN_VIZ = Number.isFinite(val) && val >= 0 ? val : 5000;
       thresholdInput.value = MIN_VIZ;
       updateThresholdLabel();
-      if (window.__lastRows) {
-        renderFromRows(window.__lastRows);
+      if (baseRows.length) {
+        renderFromRows();
       }
     });
 
@@ -345,8 +394,8 @@
       const val = Number(fontSizeInput.value);
       FONT_SIZE = Number.isFinite(val) && val >= 6 ? Math.min(val, 32) : 10;
       fontSizeInput.value = FONT_SIZE;
-      if (window.__lastRows) {
-        renderFromRows(window.__lastRows);
+      if (baseRows.length) {
+        renderFromRows();
       }
     });
 
@@ -371,22 +420,41 @@
       try {
         const workbook = XLSX.read(buffer, { type: 'array' });
         const { expenses, headers } = extractRows(workbook);
-        window.__lastRows = expenses;
+        setBaseRows(expenses);
         lastHeaders = headers;
-        renderFromRows(expenses);
+        renderFromRows();
         setCurrentFileName(fileName);
       } catch (err) {
         showError(err);
       }
     }
 
-    function renderFromRows(rows) {
-      const tree = buildHierarchy(rows);
+    function renderFromRows(rows = getActiveRows()) {
+      const activeRows = Array.isArray(rows) ? rows : [];
+      const suppressedCount = Math.max(0, (baseRows?.length || 0) - activeRows.length);
+      window.__lastRows = activeRows;
+      if (!activeRows.length) {
+        window.__lastSankeyData = null;
+        clearChart();
+        setPlaceholder('No data to render. Suppress fewer nodes or load another file.');
+        statusEl.textContent = suppressedCount
+          ? `All ${suppressedCount} rows suppressed. Nothing to render.`
+          : 'No expense rows to render.';
+        return;
+      }
+      const tree = buildHierarchy(activeRows);
       collapseSmallNodes(tree);
       const sankeyData = treeToSankey(tree);
       window.__lastSankeyData = sankeyData;
       drawChart(sankeyData);
-      statusEl.textContent = `Rendered ${rows.length} expense rows (min threshold $${MIN_VIZ}).`;
+      statusEl.textContent = `Rendered ${activeRows.length} expense rows (min threshold $${MIN_VIZ})${suppressedCount ? `, suppressed ${suppressedCount}` : ''}.`;
+    }
+
+    function clearChart() {
+      const container = document.getElementById('chart');
+      if (!container) return;
+      container.querySelectorAll('svg').forEach(el => el.remove());
+      window.__lastSvg = null;
     }
 
     function normalizeCellValue(key, val) {
@@ -471,19 +539,22 @@
       return { expenses, headers };
     }
 
-    function makeNode(name) {
-      return { name, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [], rows: [] };
+    function makeNode(name, path = name) {
+      return { name, path, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [], rows: [] };
     }
 
     function buildHierarchy(rows) {
-      const root = makeNode('Expenses');
+      const root = makeNode('Expenses', 'Expenses');
       for (const row of rows) {
         const parts = row.category.split(':').map(p => p.trim()).filter(Boolean);
         if (!parts.length) continue;
         let current = root;
+        let currentPath = '';
         for (const part of parts) {
-          if (!current.children.has(part)) current.children.set(part, makeNode(part));
+          const childPath = currentPath ? `${currentPath}:${part}` : part;
+          if (!current.children.has(part)) current.children.set(part, makeNode(part, childPath));
           current = current.children.get(part);
+          currentPath = childPath;
         }
         current.value += row.amount;
         current.rows.push(row);
@@ -518,7 +589,8 @@
       }
       if (small.length >= 2) {
         const otherValue = small.reduce((sum, c) => sum + c.value, 0);
-        const otherNode = makeNode('Other');
+        const parentPath = node.path || node.name;
+        const otherNode = makeNode('Other', `${parentPath}:Other`);
         otherNode.value = otherValue;
         otherNode.aggregated = true;
         otherNode.aggregatedDetails = small.map(c => ({ name: c.name, value: c.value }));
@@ -540,6 +612,7 @@
         const idx = nodes.length;
         nodes.push({
           name: node.name,
+          path: node.path,
           value: node.value,
           aggregated: node.aggregated,
           aggregatedDetails: node.aggregatedDetails ? [...node.aggregatedDetails] : [],
@@ -570,7 +643,7 @@
 
     function drawChart({ nodes, links }) {
       const container = document.getElementById('chart');
-      container.querySelectorAll('svg').forEach(el => el.remove());
+      clearChart();
 
       const width = Math.max(1600, Math.min(1200, container.clientWidth - 12));
       const height = Math.max(800, Math.min(container.clientHeight, window.innerHeight - 140));
@@ -619,7 +692,8 @@
         .attr('stroke', d => color(d.target.index))
         .attr('stroke-width', d => Math.max(1, d.width))
         .on('mousemove', (event, d) => showTooltip(event, d, formatValue))
-        .on('mouseleave', hideTooltip);
+        .on('mouseleave', hideTooltip)
+        .on('contextmenu', (event, d) => promptSuppression(event, d.target));
 
       const node = svg.append('g')
         .selectAll('g')
@@ -627,7 +701,10 @@
         .join('g')
         .attr('class', 'node')
         .attr('transform', d => `translate(${d.x0},${d.y0})`)
-        .on('click', (_, d) => showNodeDetails(d));
+        .on('contextmenu', (event, d) => {
+          event.preventDefault();
+          showNodeDetails(d);
+        });
 
       node.append('rect')
         .attr('height', d => d.y1 - d.y0)
@@ -718,6 +795,33 @@
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
+    }
+
+    function suppressNodeRows(node) {
+      if (!node || !Array.isArray(node.rows) || !node.rows.length) return;
+      if (!baseRows.length) return;
+      node.rows.forEach(r => {
+        if (r && Number.isFinite(r.rowNumber)) {
+          suppressedRowNumbers.add(r.rowNumber);
+        }
+      });
+      window.__suppressedRowNumbers = suppressedRowNumbers;
+      renderFromRows();
+    }
+
+    function promptSuppression(event, node) {
+      if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      if (!node || !Array.isArray(node.rows) || !node.rows.length) return;
+      if (node.name === 'Expenses') return;
+      const rowCount = node.rows.length;
+      const label = node.path || node.name;
+      const confirmMsg = `Suppress "${label}" and all descendant rows (${rowCount} row${rowCount === 1 ? '' : 's'})?`;
+      const confirmed = window.confirm(confirmMsg);
+      if (!confirmed) return;
+      suppressNodeRows(node);
     }
 
     async function exportChart(svgEl, format) {

@@ -61,7 +61,7 @@ The input reader is very specific to Quicken's output format, especially how cat
 5. Start the included Flask server in a separate Python virtual environment so the browser can fetch the XLSX:
    ```
    python -m venv .venv
-   .\.venv\Scripts\activate
+   source .\.venv\Scripts\activate (PC); source ./.venv/bin/activate (Mac)
    pip install -r requirements.txt
    python app.py
    ```
