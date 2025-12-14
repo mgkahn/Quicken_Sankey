@@ -15,11 +15,12 @@ Uses a D3-based index.html file that reads an XLSX export from Quicken transacti
 ### Features
 
 1. Auto-generates category-subcategory hierarchy by parsing Quicken-specific colon-separated Categories.
-2. Height of a node element and the thickness of a flow/link element is proportionate to the total Expenses.
+2. Renders height of a node element and the thickness of a flow/link element to be proportional to the total Expenses.
 3. Allows for dynamic setting of MIN_VIZ variable, which determines the lowest amount to be displayed. Any flows with amount less than MIN_VIZ is rolled up into a aggregated "Other" node. The exception is if there is only a single node to be aggregated, that node is displayed.
 4. Allows for dynamic setting of font size.
-5. Downloads Sankey chart as SVG or PNG into browser download folder.
-6. Downloads node-level raw data rows as CSV into browser download folder.
+5. Dynamically suppresses a data flow and all downnstream children and dynamically reinstates all supporessed data flows.
+6. Downloads Sankey chart as SVG or PNG into browser download folder.
+7. Downloads node-level raw data rows as CSV into browser download folder.
 
 ### Limitations
 1. Reader initial default filename is "quicken_export.xlsx" but can be changed using "Load another file" button.
@@ -88,9 +89,21 @@ The red arrow shows a category that also is less than the minimum threshold yet 
 
 This screen shot shows changes due to lowering the minimum threshold to $1000. Nodes that previously were aggregated are now visible. Note that there are multiple nodes with amounts less than the threshold. These are not aggregated into an "Other" node because they are singleton nodes.
 
-Hovering over a flow/link shows source and target node plus amount, which is also readily discernable from the chart. Link hovering is more useful for "Other" links, which show all of the individual children nodes and their amounts that got rolled up into the "Other" node. At this time, there is no hovering behavior for data nodes.
+**HOVERING** over a flow/link shows source and target node plus amount, which is also readily discernable from the chart. Link hovering is more useful for "Other" links, which show all of the individual children nodes and their amounts that got rolled up into the "Other" node. At this time, there is no hovering behavior for data nodes.
 
-Clicking on any data node generates a popup table containing the raw data rows at this node and all children data nodes. All columns from the raw data file are included. The "download rows" button on the top right side of the table downloads the CSV into the browser's download folder.
+**RIGHT clicking** on any data node generates a popup table containing the raw data rows at this node and all children data nodes. All columns from the raw data file are included. The "download rows" button on the top right side of the table downloads the CSV into the browser's download folder. **LEFT clicking** on a data nodes does nothing (currently).
+
+![alt text](images/DataTable.png)
+
+**RIGHT clicking** on any flow/link brings up a dialog box that allows you to remove (suppress) the data in that flow and all downstream children flows. The "Reset suppressed rows" button in the upper right corner brings back ALL suppressed rows. There is no way to bring back a selected subset of suppressed data.  **LEFT clicking** on a flow/link does nothing (currently). 
+
+To reinstate suppressed flows, click "Reset suppressed rows" button in upper right corner. Or, simply refresh the entire web page using the browser's refresh button.
 
 
+![alt text](SuppressRows.png)
+
+
+After suppression, Sankey chart is redrawn:
+
+![alt text](images/SuppressRows2.png)
 

@@ -276,6 +276,8 @@
     let lastHeaders = [];
     let suppressedRowNumbers = new Set();
     let baseRows = [];
+    let userSelectedFile = false;
+    const STORAGE_KEY = 'sankey_user_rows_v1';
     const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
@@ -338,6 +340,7 @@
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
+      userSelectedFile = true;
       statusEl.textContent = `Reading ${file.name}...`;
       readFileAsArrayBuffer(file)
         .then(buffer => renderFromArrayBuffer(buffer, file.name))
@@ -361,6 +364,40 @@
       window.__lastRows = baseRows;
     }
 
+    function saveUserState(rows, headers, fileName) {
+      if (!window.localStorage) return;
+      try {
+        const payload = {
+          rows: Array.isArray(rows) ? rows : [],
+          headers: Array.isArray(headers) ? headers : [],
+          fileName: fileName || 'quicken_export.xlsx'
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      } catch (err) {
+        console.warn('Unable to persist user-selected data file.', err);
+      }
+    }
+
+    function tryRestoreUserState() {
+      if (!window.localStorage) return false;
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return false;
+      try {
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.rows) || !data.rows.length) return false;
+        userSelectedFile = true;
+        setCurrentFileName(data.fileName || 'quicken_export.xlsx');
+        lastHeaders = Array.isArray(data.headers) ? data.headers : [];
+        setBaseRows(data.rows);
+        renderFromRows();
+        statusEl.textContent = `Loaded cached data from ${data.fileName || 'selected file'}.`;
+        return true;
+      } catch (err) {
+        console.warn('Unable to restore cached data.', err);
+        return false;
+      }
+    }
+
     function getActiveRows() {
       if (!suppressedRowNumbers || !suppressedRowNumbers.size) {
         return baseRows.slice();
@@ -369,11 +406,13 @@
     }
 
     async function loadDefaultWorkbook() {
+      if (userSelectedFile) return;
       try {
         const resp = await fetch('quicken_export.xlsx');
         if (!resp.ok) throw new Error('Default workbook not found.');
         const buffer = await resp.arrayBuffer();
-        await renderFromArrayBuffer(buffer, 'quicken_export.xlsx');
+        if (userSelectedFile) return;
+        await renderFromArrayBuffer(buffer, 'quicken_export.xlsx', { isDefault: true });
       } catch (err) {
         statusEl.textContent = 'Pick a file to render.';
         setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
@@ -416,7 +455,9 @@
       }
     });
 
-    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx') {
+    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx', opts = {}) {
+      const isDefault = opts && opts.isDefault;
+      if (isDefault && userSelectedFile) return;
       try {
         const workbook = XLSX.read(buffer, { type: 'array' });
         const { expenses, headers } = extractRows(workbook);
@@ -424,6 +465,10 @@
         lastHeaders = headers;
         renderFromRows();
         setCurrentFileName(fileName);
+        if (!isDefault) {
+          userSelectedFile = true;
+          saveUserState(expenses, headers, fileName);
+        }
       } catch (err) {
         showError(err);
       }
@@ -1095,7 +1140,10 @@
       if (window.__lastSankeyData) drawChart(window.__lastSankeyData);
     });
 
-    loadDefaultWorkbook();
+    const restored = tryRestoreUserState();
+    if (!restored) {
+      loadDefaultWorkbook();
+    }
   </script>
 </body>
 </html>
