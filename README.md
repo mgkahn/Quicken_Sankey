@@ -5,6 +5,7 @@ D3-based Sankey diagram for Quicken transactions
 - [What it does](#what-it-does)
 - [Brief instructions](#brief-instructions)
 - [What you get](#what-you-get)
+- [New features](#new-features)
 
 
 ## What it does
@@ -170,6 +171,18 @@ You can save the current Sankey chart as either a PNG or SVG file. Only the main
 To print the entire Sankey page that includes the filename  and min viz/font settings, use the browser's native print function.
 
 
+## New Features
+
+### Dynamic date range filtering
+If a data file contains a column named "Date" (case-sensitive), two new controls will appear across the top: Min Date and Max Date. The initial values are the earliest and latest dates that appear in the current data file. 
+
+![alt text](images/Sankey_DefaultDate.png)
+
+Altering dates filters the data file to transactions that fall within the new date range (inclusive). 
+
+![alt text](images/Sankey_ChangeDate.png)
+
+To restore back to the original min/max dates, (all transactions) use "Reset dates" button in upper right corner (green box/arrow). Settings for MIN_VIZ, font and suppressed rows remain unchanged.
 
 ---
 

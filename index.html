@@ -40,7 +40,9 @@
     }
     .controls-right {
       display: flex;
-      align-items: center;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
     }
     .btn {
       background: var(--panel);
@@ -50,6 +52,18 @@
       border-radius: 10px;
       cursor: pointer;
       font-size: 10px;
+    }
+    .date-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .date-input {
+      width: 140px;
+      padding: 4px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      font-size: 12px;
     }
     .status { color: var(--muted); font-size: 13px; }
     #chart {
@@ -210,6 +224,16 @@
         Font size
         <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
       </label>
+      <div class="date-controls" id="date-controls" style="display:none;">
+        <label class="status" style="display:flex;align-items:center;gap:6px;">
+          Min date
+          <input id="min-date" type="date" class="date-input">
+        </label>
+        <label class="status" style="display:flex;align-items:center;gap:6px;">
+          Max date
+          <input id="max-date" type="date" class="date-input">
+        </label>
+      </div>
       <label class="status" style="display:flex;align-items:center;gap:6px;">
         Export
         <select id="export-format" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
@@ -221,6 +245,7 @@
     </div>
     <div class="controls-right">
       <button id="reset-suppressed" class="btn" type="button" style="font-size:12px;">Reset suppressed rows</button>
+      <button id="reset-dates" class="btn" type="button" style="font-size:12px;display:none;">Reset dates</button>
     </div>
   </div>
   <div id="chart">
@@ -267,6 +292,10 @@
     const fileInput = document.getElementById('file-input');
     const thresholdInput = document.getElementById('min-viz');
     const fontSizeInput = document.getElementById('font-size');
+    const dateControls = document.getElementById('date-controls');
+    const minDateInput = document.getElementById('min-date');
+    const maxDateInput = document.getElementById('max-date');
+    const resetDatesBtn = document.getElementById('reset-dates');
     const exportFormat = document.getElementById('export-format');
     const exportBtn = document.getElementById('export-btn');
     const resetSuppressedBtn = document.getElementById('reset-suppressed');
@@ -285,6 +314,9 @@
     let modalSort = { key: 'Category', dir: 'asc' };
     let suppressedRowNumbers = new Set();
     let baseRows = [];
+    let activeDateKey = null;
+    let dateBounds = null;
+    let dateFilter = { min: null, max: null };
     let userSelectedFile = false;
     const STORAGE_KEY = 'sankey_user_rows_v1';
     const formatNumber = d3.format(',.0f');
@@ -332,7 +364,25 @@
         }
         suppressedRowNumbers.clear();
         window.__suppressedRowNumbers = suppressedRowNumbers;
-        renderFromRows(baseRows);
+        renderFromRows();
+      });
+    }
+    if (minDateInput) {
+      minDateInput.addEventListener('change', () => {
+        updateDateFilter('min');
+      });
+    }
+    if (maxDateInput) {
+      maxDateInput.addEventListener('change', () => {
+        updateDateFilter('max');
+      });
+    }
+    if (resetDatesBtn) {
+      resetDatesBtn.addEventListener('click', () => {
+        if (!activeDateKey || !dateBounds || !minDateInput || !maxDateInput) return;
+        minDateInput.value = formatDateInput(dateBounds.min);
+        maxDateInput.value = formatDateInput(dateBounds.max);
+        updateDateFilter('max');
       });
     }
 
@@ -366,6 +416,85 @@
       }
     }
 
+    function setDateControls(dateKey, range) {
+      if (!dateControls || !minDateInput || !maxDateInput) return;
+      if (!dateKey || !range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+        activeDateKey = null;
+        dateBounds = null;
+        dateFilter = { min: null, max: null };
+        dateControls.style.display = 'none';
+        minDateInput.value = '';
+        maxDateInput.value = '';
+        if (resetDatesBtn) resetDatesBtn.style.display = 'none';
+        return;
+      }
+      const minLabel = formatDateInput(range.min);
+      const maxLabel = formatDateInput(range.max);
+      const minValue = parseDateInputValue(minLabel, false);
+      const maxValue = parseDateInputValue(maxLabel, true);
+      if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+        activeDateKey = null;
+        dateBounds = null;
+        dateFilter = { min: null, max: null };
+        dateControls.style.display = 'none';
+        minDateInput.value = '';
+        maxDateInput.value = '';
+        if (resetDatesBtn) resetDatesBtn.style.display = 'none';
+        return;
+      }
+      activeDateKey = dateKey;
+      dateBounds = { min: minValue, max: maxValue };
+      dateFilter = { min: minValue, max: maxValue };
+      minDateInput.min = minLabel;
+      minDateInput.max = maxLabel;
+      maxDateInput.min = minLabel;
+      maxDateInput.max = maxLabel;
+      minDateInput.value = minLabel;
+      maxDateInput.value = maxLabel;
+      dateControls.style.display = 'flex';
+      if (resetDatesBtn) resetDatesBtn.style.display = 'inline-flex';
+    }
+
+    function updateDateFilter(changed) {
+      if (!activeDateKey || !dateBounds || !minDateInput || !maxDateInput) return;
+      let minValue = parseDateInputValue(minDateInput.value, false);
+      let maxValue = parseDateInputValue(maxDateInput.value, true);
+      if (!Number.isFinite(minValue)) minValue = dateBounds.min;
+      if (!Number.isFinite(maxValue)) maxValue = dateBounds.max;
+      if (minValue > maxValue) {
+        if (changed === 'min') {
+          maxValue = minValue;
+          maxDateInput.value = formatDateInput(maxValue);
+        } else {
+          minValue = maxValue;
+          minDateInput.value = formatDateInput(minValue);
+        }
+      }
+      dateFilter = { min: minValue, max: maxValue };
+      if (baseRows.length) {
+        renderFromRows();
+      }
+    }
+
+    function parseDateInputValue(value, isEndOfDay) {
+      if (!value) return null;
+      const date = new Date(`${value}T00:00:00`);
+      if (Number.isNaN(date.getTime())) return null;
+      if (isEndOfDay) {
+        date.setHours(23, 59, 59, 999);
+      }
+      return date.getTime();
+    }
+
+    function formatDateInput(ts) {
+      if (!Number.isFinite(ts)) return '';
+      const date = new Date(ts);
+      const y = date.getFullYear();
+      const m = String(date.getMonth() + 1).padStart(2, '0');
+      const d = String(date.getDate()).padStart(2, '0');
+      return `${y}-${m}-${d}`;
+    }
+
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -387,19 +516,29 @@
 
     function setBaseRows(rows) {
       baseRows = Array.isArray(rows) ? rows.slice() : [];
+      if (activeDateKey) {
+        baseRows.forEach((row) => {
+          if (!Number.isFinite(row.dateTimestamp)) {
+            const rawValue = getRowDateValue(row, activeDateKey);
+            row.dateTimestamp = parseDateValue(rawValue);
+          }
+        });
+      }
       suppressedRowNumbers = new Set();
       window.__baseRows = baseRows;
       window.__suppressedRowNumbers = suppressedRowNumbers;
       window.__lastRows = baseRows;
     }
 
-    function saveUserState(rows, headers, fileName) {
+    function saveUserState(rows, headers, fileName, dateKey, dateRange) {
       if (!window.localStorage) return;
       try {
         const payload = {
           rows: Array.isArray(rows) ? rows : [],
           headers: Array.isArray(headers) ? headers : [],
-          fileName: fileName || 'quicken_export.xlsx'
+          fileName: fileName || 'quicken_export.xlsx',
+          dateKey: dateKey || null,
+          dateRange: dateRange || null
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       } catch (err) {
@@ -417,6 +556,9 @@
         userSelectedFile = true;
         setCurrentFileName(data.fileName || 'quicken_export.xlsx');
         lastHeaders = Array.isArray(data.headers) ? data.headers : [];
+        const dateKey = data.dateKey || findDateKey(lastHeaders, data.rows);
+        const dateRange = data.dateRange || (dateKey ? getDateRange(data.rows, dateKey) : null);
+        setDateControls(dateKey, dateRange);
         setBaseRows(data.rows);
         renderFromRows();
         statusEl.textContent = `Loaded cached data from ${data.fileName || 'selected file'}.`;
@@ -428,10 +570,22 @@
     }
 
     function getActiveRows() {
-      if (!suppressedRowNumbers || !suppressedRowNumbers.size) {
-        return baseRows.slice();
+      let rows = baseRows.slice();
+      if (suppressedRowNumbers && suppressedRowNumbers.size) {
+        rows = rows.filter(r => !suppressedRowNumbers.has(r.rowNumber));
       }
-      return baseRows.filter(r => !suppressedRowNumbers.has(r.rowNumber));
+      if (activeDateKey && dateFilter && Number.isFinite(dateFilter.min) && Number.isFinite(dateFilter.max)) {
+        const min = dateFilter.min;
+        const max = dateFilter.max;
+        rows = rows.filter((row) => {
+          const ts = Number.isFinite(row.dateTimestamp)
+            ? row.dateTimestamp
+            : parseDateValue(getRowDateValue(row, activeDateKey));
+          if (!Number.isFinite(ts)) return false;
+          return ts >= min && ts <= max;
+        });
+      }
+      return rows;
     }
 
     async function loadDefaultWorkbook() {
@@ -489,14 +643,15 @@
       if (isDefault && userSelectedFile) return;
       try {
         const workbook = XLSX.read(buffer, { type: 'array' });
-        const { expenses, headers } = extractRows(workbook);
+        const { expenses, headers, dateKey, dateRange } = extractRows(workbook);
+        setDateControls(dateKey, dateRange);
         setBaseRows(expenses);
         lastHeaders = headers;
         renderFromRows();
         setCurrentFileName(fileName);
         if (!isDefault) {
           userSelectedFile = true;
-          saveUserState(expenses, headers, fileName);
+          saveUserState(expenses, headers, fileName, dateKey, dateRange);
         }
       } catch (err) {
         showError(err);
@@ -505,15 +660,26 @@
 
     function renderFromRows(rows = getActiveRows()) {
       const activeRows = Array.isArray(rows) ? rows : [];
-      const suppressedCount = Math.max(0, (baseRows?.length || 0) - activeRows.length);
+      const suppressedCount = suppressedRowNumbers?.size ? suppressedRowNumbers.size : 0;
+      const dateFilterActive = activeDateKey && dateFilter && Number.isFinite(dateFilter.min) && Number.isFinite(dateFilter.max);
+      const unsuppressedRows = suppressedCount
+        ? baseRows.filter(r => !suppressedRowNumbers.has(r.rowNumber))
+        : baseRows;
+      const dateFilteredOut = dateFilterActive
+        ? Math.max(0, unsuppressedRows.length - activeRows.length)
+        : 0;
       window.__lastRows = activeRows;
       if (!activeRows.length) {
         window.__lastSankeyData = null;
         clearChart();
         setPlaceholder('No data to render. Suppress fewer nodes or load another file.');
-        statusEl.textContent = suppressedCount
-          ? `All ${suppressedCount} rows suppressed. Nothing to render.`
-          : 'No expense rows to render.';
+        if (dateFilterActive && unsuppressedRows.length) {
+          statusEl.textContent = 'No rows in the selected date range.';
+        } else {
+          statusEl.textContent = suppressedCount
+            ? `All ${suppressedCount} rows suppressed. Nothing to render.`
+            : 'No expense rows to render.';
+        }
         return;
       }
       const tree = buildHierarchy(activeRows);
@@ -521,7 +687,7 @@
       const sankeyData = treeToSankey(tree);
       window.__lastSankeyData = sankeyData;
       drawChart(sankeyData);
-      statusEl.textContent = `Rendered ${activeRows.length} expense rows (min threshold $${MIN_VIZ})${suppressedCount ? `, suppressed ${suppressedCount}` : ''}.`;
+      statusEl.textContent = `Rendered ${activeRows.length} expense rows (min threshold $${MIN_VIZ})${suppressedCount ? `, suppressed ${suppressedCount}` : ''}${dateFilteredOut ? `, filtered ${dateFilteredOut} by date` : ''}.`;
     }
 
     function clearChart() {
@@ -582,6 +748,78 @@
       return out;
     }
 
+    function findDateKey(headers, rows) {
+      const headerList = Array.isArray(headers) ? headers : [];
+      const exact = headerList.find(h => String(h || '').trim().toLowerCase() === 'date');
+      if (exact) return exact;
+      const fuzzy = headerList.find(h => /date/i.test(String(h || '')));
+      if (fuzzy) return fuzzy;
+      const sample = rows && rows.length ? Object.keys(rows[0]) : [];
+      const sampleExact = sample.find(k => String(k || '').trim().toLowerCase() === 'date');
+      if (sampleExact) return sampleExact;
+      const sampleFuzzy = sample.find(k => /date/i.test(String(k || '')));
+      return sampleFuzzy || null;
+    }
+
+    function getRowDateValue(row, dateKey) {
+      if (!row || !dateKey) return null;
+      if (row[dateKey] != null && row[dateKey] !== '') return row[dateKey];
+      if (row.raw && row.raw[dateKey] != null && row.raw[dateKey] !== '') {
+        return row.raw[dateKey];
+      }
+      return null;
+    }
+
+    function parseDateValue(value) {
+      if (value == null || value === '') return null;
+      if (value instanceof Date) {
+        const time = value.getTime();
+        return Number.isNaN(time) ? null : time;
+      }
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        const parsed = XLSX?.SSF?.parse_date_code ? XLSX.SSF.parse_date_code(value) : null;
+        if (parsed && parsed.y && parsed.m && parsed.d) {
+          const date = new Date(
+            parsed.y,
+            (parsed.m || 1) - 1,
+            parsed.d || 1,
+            parsed.H || 0,
+            parsed.M || 0,
+            Math.floor(parsed.S || 0)
+          );
+          const time = date.getTime();
+          return Number.isNaN(time) ? null : time;
+        }
+      }
+      const str = String(value).trim();
+      if (!str) return null;
+      let iso = str;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+        iso = `${str}T00:00:00`;
+      } else if (/^\d{4}-\d{2}-\d{2} /.test(str)) {
+        iso = str.replace(' ', 'T');
+      }
+      const time = new Date(iso).getTime();
+      if (!Number.isNaN(time)) return time;
+      const fallback = new Date(str).getTime();
+      return Number.isNaN(fallback) ? null : fallback;
+    }
+
+    function getDateRange(rows, dateKey) {
+      if (!dateKey || !Array.isArray(rows) || !rows.length) return null;
+      let min = null;
+      let max = null;
+      rows.forEach((row) => {
+        const rawValue = getRowDateValue(row, dateKey);
+        const ts = parseDateValue(rawValue);
+        if (!Number.isFinite(ts)) return;
+        if (min == null || ts < min) min = ts;
+        if (max == null || ts > max) max = ts;
+      });
+      if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
+      return { min, max };
+    }
+
     function extractRows(workbook) {
       const firstSheet = workbook.SheetNames[0];
       const sheet = workbook.Sheets[firstSheet];
@@ -591,14 +829,18 @@
         ? headerRows[0].filter(h => String(h || '').trim() !== '')
         : (rowsRaw[0] ? Object.keys(rowsRaw[0]) : []);
       const normalizedRows = rowsRaw.map(normalizeRow);
+      const dateKey = findDateKey(headers, normalizedRows);
+      const dateRange = dateKey ? getDateRange(normalizedRows, dateKey) : null;
       const expenses = normalizedRows
         .map((row, idx) => {
           const category = String(row.Category || '').trim();
           const amount = Number(row.Amount);
+          const dateTimestamp = dateKey ? parseDateValue(getRowDateValue(row, dateKey)) : null;
           return {
             category,
             amount,
             rowNumber: idx + 1,
+            dateTimestamp,
             raw: row
           };
         })
@@ -607,10 +849,11 @@
           category: r.category,
           amount: Math.abs(r.amount),
           rowNumber: r.rowNumber,
+          dateTimestamp: r.dateTimestamp,
           raw: r.raw
         }));
       if (!expenses.length) throw new Error('No expenses found. Ensure the sheet has negative Amount values.');
-      return { expenses, headers };
+      return { expenses, headers, dateKey, dateRange };
     }
 
     function makeNode(name, path = name) {
