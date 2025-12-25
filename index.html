@@ -176,6 +176,13 @@
     table.modal-table td:last-child {
       text-align: right;
     }
+    table.modal-table th.sortable {
+      cursor: pointer;
+      user-select: none;
+    }
+    table.modal-table th.sortable:hover {
+      background: #eef2f7;
+    }
     .modal-empty {
       padding: 12px 0;
       color: #9ca3af;
@@ -271,9 +278,11 @@
     const modalEmpty = document.getElementById('modal-empty');
     const modalCloseBtn = document.getElementById('modal-close');
     const downloadRowsBtn = document.getElementById('download-rows');
+    const ROW_NUMBER_KEY = '__row_number__';
     let currentFileName = 'quicken_export.xlsx';
     let modalRowsData = [];
     let lastHeaders = [];
+    let modalSort = { key: 'Category', dir: 'asc' };
     let suppressedRowNumbers = new Set();
     let baseRows = [];
     let userSelectedFile = false;
@@ -296,6 +305,19 @@
       downloadRowsBtn.addEventListener('click', () => {
         if (!modalRowsData.length) return;
         downloadRowsCsv(modalRowsData, 'sankey_data.csv', lastHeaders);
+      });
+    }
+    if (modalHeaderRow) {
+      modalHeaderRow.addEventListener('click', (event) => {
+        const th = event.target.closest('th');
+        if (!th || !modalHeaderRow.contains(th)) return;
+        const key = th.dataset.key;
+        if (!key) return;
+        modalSort = {
+          key,
+          dir: modalSort.key === key && modalSort.dir === 'asc' ? 'desc' : 'asc'
+        };
+        renderModalRows(modalRowsData, lastHeaders);
       });
     }
     if (resetSuppressedBtn) {
@@ -327,8 +349,15 @@
 
     function setModalHeaders(headers) {
       if (!modalHeaderRow) return;
-      const cols = ['Row #', ...(headers || [])];
-      modalHeaderRow.innerHTML = cols.map(h => `<th>${escapeHtml(String(h || ''))}</th>`).join('');
+      const cols = [
+        { label: 'Export Row #', key: ROW_NUMBER_KEY },
+        ...(headers || []).map(h => ({ label: h, key: String(h || '') }))
+      ];
+      modalHeaderRow.innerHTML = cols.map((col) => {
+        const isActive = modalSort && modalSort.key === col.key;
+        const indicator = isActive ? (modalSort.dir === 'asc' ? ' ^' : ' v') : '';
+        return `<th class="sortable${isActive ? ' is-sorted' : ''}" data-key="${escapeHtml(String(col.key))}">${escapeHtml(String(col.label || ''))}${indicator}</th>`;
+      }).join('');
     }
 
     function updateThresholdLabel() {
@@ -776,6 +805,7 @@
         const bNum = Number.isFinite(b.rowNumber) ? b.rowNumber : 0;
         return aNum - bNum;
       });
+      modalSort = { key: 'Category', dir: 'asc' };
       modalRowsData = rows;
       if (modalTitle) {
         modalTitle.textContent = `${node.name}`;
@@ -794,16 +824,18 @@
         ? headers
         : (rows[0]?.raw ? Object.keys(rows[0].raw) : []);
       setModalHeaders(effectiveHeaders);
+      const sortedRows = sortModalRows(rows, effectiveHeaders);
+      modalRowsData = sortedRows;
       modalRowsBody.innerHTML = '';
-      if (!rows.length) {
+      if (!sortedRows.length) {
         modalEmpty.style.display = 'block';
         return;
       }
       modalEmpty.style.display = 'none';
       const frag = document.createDocumentFragment();
-      rows.forEach((row, idx) => {
+      sortedRows.forEach((row, idx) => {
         const tr = document.createElement('tr');
-        const rowNum = idx + 1; // display rows as 1-based within the modal
+        const rowNum = Number.isFinite(row.rowNumber) ? row.rowNumber : idx + 1;
         const cells = [rowNum, ...effectiveHeaders.map(h => row.raw ? row.raw[h] : row[h])];
         tr.innerHTML = cells.map((val, cellIdx) => {
           const safe = escapeHtml(val == null ? '' : String(val));
@@ -827,7 +859,7 @@
       const lines = [];
       lines.push(['row_number', ...effectiveHeaders].map(csvEscape).join(','));
       rows.forEach((r, idx) => {
-        const rowNum = idx + 1;
+        const rowNum = Number.isFinite(r.rowNumber) ? r.rowNumber : idx + 1;
         const values = effectiveHeaders.map(h => csvEscape(r.raw ? r.raw[h] : r[h]));
         lines.push([rowNum, ...values].join(','));
       });
@@ -1087,6 +1119,55 @@
         return `"${str.replace(/\"/g, '""')}"`;
       }
       return str;
+    }
+
+    function sortModalRows(rows, headers) {
+      if (!modalSort || !modalSort.key) return rows.slice();
+      const key = modalSort.key;
+      const dir = modalSort.dir === 'desc' ? -1 : 1;
+      const headerSet = new Set(headers || []);
+      if (key !== ROW_NUMBER_KEY && !headerSet.has(key)) {
+        return rows.slice();
+      }
+      const withIndex = rows.map((row, idx) => {
+        const rawVal = key === ROW_NUMBER_KEY
+          ? (Number.isFinite(row.rowNumber) ? row.rowNumber : idx + 1)
+          : (row.raw ? row.raw[key] : row[key]);
+        return { row, idx, sortVal: coerceSortValue(rawVal) };
+      });
+      withIndex.sort((a, b) => {
+        const cmp = compareSortValues(a.sortVal, b.sortVal);
+        if (cmp !== 0) return cmp * dir;
+        return a.idx - b.idx;
+      });
+      return withIndex.map(item => item.row);
+    }
+
+    function coerceSortValue(val) {
+      if (val == null) return { type: 'empty', value: '' };
+      if (typeof val === 'number' && Number.isFinite(val)) {
+        return { type: 'number', value: val };
+      }
+      const str = String(val).trim();
+      if (!str) return { type: 'empty', value: '' };
+      const cleaned = str.replace(/[$,]/g, '');
+      const asNumber = Number(cleaned);
+      if (!Number.isNaN(asNumber) && cleaned !== '') {
+        return { type: 'number', value: asNumber };
+      }
+      const asDate = Date.parse(str);
+      if (!Number.isNaN(asDate) && /[-\/:]/.test(str)) {
+        return { type: 'date', value: asDate };
+      }
+      return { type: 'string', value: str.toLowerCase() };
+    }
+
+    function compareSortValues(a, b) {
+      const typeOrder = { number: 0, date: 1, string: 2, empty: 3 };
+      if (a.type !== b.type) return typeOrder[a.type] - typeOrder[b.type];
+      if (a.type === 'string') return a.value.localeCompare(b.value);
+      if (a.value === b.value) return 0;
+      return a.value < b.value ? -1 : 1;
     }
 
     function showTooltip(event, d, formatValue) {
