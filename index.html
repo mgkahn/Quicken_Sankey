@@ -22,21 +22,28 @@
       background: var(--bg);
       color: var(--text);
     }
-    header { padding: 18px 24px 8px; }
-    h1 { margin: 0 0 6px; font-size: 22px; letter-spacing: -0.02em; }
+    header { padding: 6px 24px 0; }
+    h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
     p { margin: 0; color: var(--muted); font-size: 14px; }
     .controls {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      padding: 12px 24px 20px;
+      padding: 2px 24px 4px;
     }
     .controls-left {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 6px;
       flex-wrap: wrap;
+    }
+    .controls-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      width: 100%;
     }
     .controls-right {
       display: flex;
@@ -72,11 +79,11 @@
       height: 95vh;
       max-height: 900px;
       min-height: 520px;
-      margin: 0 auto 28px;
+      margin: 0 auto 16px;
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 18px;
+      padding: 0 10px 10px;
       box-shadow: 0 10px 32px rgba(15,23,42,0.08);
       position: relative;
       overflow: auto;
@@ -207,45 +214,55 @@
 <body>
   <header>
     <h1 id="title">Sankey Overview - quicken_export.xlsx</h1>
-    <p>Reads <code id="file-label">quicken_export.xlsx</code> (Category, Amount), uses negative Amount rows as expenses, and collapses categories under $<span id="threshold-label">5000</span> into Other.</p>
   </header>
   <div class="controls">
     <div class="controls-left">
-      <label class="btn">
-        Load another file
-        <input id="file-input" type="file" accept=".xlsx" style="display:none">
-      </label>
-      <span class="status" id="status">Loading quicken_export.xlsx...</span>
-      <label class="status" style="display:flex;align-items:center;gap:6px;">
-        Min threshold $
-        <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-      </label>
-      <label class="status" style="display:flex;align-items:center;gap:6px;">
-        Font size
-        <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-      </label>
-      <div class="date-controls" id="date-controls" style="display:none;">
+      <div class="controls-row">
+        <label class="btn">
+          Load another file
+          <input id="file-input" type="file" accept=".xlsx" style="display:none">
+        </label>
+        <span class="status" id="status">Loading quicken_export.xlsx...</span>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
-          Min date
-          <input id="min-date" type="date" class="date-input">
+          Min threshold $
+          <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
         </label>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
-          Max date
-          <input id="max-date" type="date" class="date-input">
+          Font size
+          <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+        </label>
+        <div class="date-controls" id="date-controls" style="display:none;">
+          <label class="status" style="display:flex;align-items:center;gap:6px;">
+            Min date
+            <input id="min-date" type="date" class="date-input">
+          </label>
+          <label class="status" style="display:flex;align-items:center;gap:6px;">
+            Max date
+            <input id="max-date" type="date" class="date-input">
+          </label>
+        </div>
+        <label id="date-range-wrapper" class="status" style="display:none;align-items:center;gap:6px;">
+          Date range
+          <select id="date-range" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+            <option value="all" selected>All</option>
+            <option value="custom" id="date-range-custom" hidden>Custom</option>
+            <option value="ytd">YTD</option>
+            <option value="last-year">Last Year</option>
+            <option value="rolling-12mo">Rolling 12mo</option>
+          </select>
         </label>
       </div>
-      <label class="status" style="display:flex;align-items:center;gap:6px;">
-        Export
-        <select id="export-format" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-          <option value="png">PNG</option>
-          <option value="svg">SVG</option>
-        </select>
-      </label>
-      <button id="export-btn" class="btn" type="button" style="font-size:12px;">Save chart</button>
-    </div>
-    <div class="controls-right">
-      <button id="reset-suppressed" class="btn" type="button" style="font-size:12px;">Reset suppressed rows</button>
-      <button id="reset-dates" class="btn" type="button" style="font-size:12px;display:none;">Reset dates</button>
+      <div class="controls-row">
+        <label class="status" style="display:flex;align-items:center;gap:6px;">
+          Export
+          <select id="export-format" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+            <option value="png">PNG</option>
+            <option value="svg">SVG</option>
+          </select>
+        </label>
+        <button id="export-btn" class="btn" type="button" style="font-size:12px;">Save chart</button>
+        <button id="reset-suppressed" class="btn" type="button" style="font-size:12px;">Reset suppressed rows</button>
+      </div>
     </div>
   </div>
   <div id="chart">
@@ -295,7 +312,9 @@
     const dateControls = document.getElementById('date-controls');
     const minDateInput = document.getElementById('min-date');
     const maxDateInput = document.getElementById('max-date');
-    const resetDatesBtn = document.getElementById('reset-dates');
+    const dateRangeWrapper = document.getElementById('date-range-wrapper');
+    const dateRangeSelect = document.getElementById('date-range');
+    const dateRangeCustomOption = document.getElementById('date-range-custom');
     const exportFormat = document.getElementById('export-format');
     const exportBtn = document.getElementById('export-btn');
     const resetSuppressedBtn = document.getElementById('reset-suppressed');
@@ -369,20 +388,21 @@
     }
     if (minDateInput) {
       minDateInput.addEventListener('change', () => {
+        if (dateRangeCustomOption) dateRangeCustomOption.hidden = false;
+        if (dateRangeSelect) dateRangeSelect.value = 'custom';
         updateDateFilter('min');
       });
     }
     if (maxDateInput) {
       maxDateInput.addEventListener('change', () => {
+        if (dateRangeCustomOption) dateRangeCustomOption.hidden = false;
+        if (dateRangeSelect) dateRangeSelect.value = 'custom';
         updateDateFilter('max');
       });
     }
-    if (resetDatesBtn) {
-      resetDatesBtn.addEventListener('click', () => {
-        if (!activeDateKey || !dateBounds || !minDateInput || !maxDateInput) return;
-        minDateInput.value = formatDateInput(dateBounds.min);
-        maxDateInput.value = formatDateInput(dateBounds.max);
-        updateDateFilter('max');
+    if (dateRangeSelect) {
+      dateRangeSelect.addEventListener('change', () => {
+        applyDateRangePreset(dateRangeSelect.value);
       });
     }
 
@@ -425,7 +445,7 @@
         dateControls.style.display = 'none';
         minDateInput.value = '';
         maxDateInput.value = '';
-        if (resetDatesBtn) resetDatesBtn.style.display = 'none';
+        if (dateRangeWrapper) dateRangeWrapper.style.display = 'none';
         return;
       }
       const minLabel = formatDateInput(range.min);
@@ -439,7 +459,7 @@
         dateControls.style.display = 'none';
         minDateInput.value = '';
         maxDateInput.value = '';
-        if (resetDatesBtn) resetDatesBtn.style.display = 'none';
+        if (dateRangeWrapper) dateRangeWrapper.style.display = 'none';
         return;
       }
       activeDateKey = dateKey;
@@ -452,7 +472,9 @@
       minDateInput.value = minLabel;
       maxDateInput.value = maxLabel;
       dateControls.style.display = 'flex';
-      if (resetDatesBtn) resetDatesBtn.style.display = 'inline-flex';
+      if (dateRangeWrapper) dateRangeWrapper.style.display = 'flex';
+      if (dateRangeSelect) dateRangeSelect.value = 'all';
+      if (dateRangeCustomOption) dateRangeCustomOption.hidden = true;
     }
 
     function updateDateFilter(changed) {
@@ -474,6 +496,38 @@
       if (baseRows.length) {
         renderFromRows();
       }
+    }
+
+    function applyDateRangePreset(preset) {
+      if (!activeDateKey || !dateBounds || !minDateInput || !maxDateInput) return;
+      if (preset === 'custom') {
+        updateDateFilter('max');
+        return;
+      }
+      let minLabel = '';
+      let maxLabel = '';
+      if (preset === 'ytd') {
+        const now = new Date();
+        const year = now.getFullYear();
+        minLabel = formatDateInput(new Date(year, 0, 1).getTime());
+        maxLabel = formatDateInput(now.getTime());
+      } else if (preset === 'last-year') {
+        const year = new Date().getFullYear() - 1;
+        minLabel = formatDateInput(new Date(year, 0, 1).getTime());
+        maxLabel = formatDateInput(new Date(year, 11, 31).getTime());
+      } else if (preset === 'rolling-12mo') {
+        const maxDate = new Date(dateBounds.max);
+        const minDate = new Date(dateBounds.max);
+        minDate.setMonth(minDate.getMonth() - 12);
+        minLabel = formatDateInput(minDate.getTime());
+        maxLabel = formatDateInput(maxDate.getTime());
+      } else {
+        minLabel = formatDateInput(dateBounds.min);
+        maxLabel = formatDateInput(dateBounds.max);
+      }
+      minDateInput.value = minLabel;
+      maxDateInput.value = maxLabel;
+      updateDateFilter('max');
     }
 
     function parseDateInputValue(value, isEndOfDay) {
@@ -975,7 +1029,7 @@
         .nodeId((d, i) => i)
         .nodeWidth(12)
         .nodePadding(70)
-        .extent([[10, 10], [width - 10, height - 10]])
+        .extent([[0, 0], [width, height]])
         .nodeAlign(d3.sankeyLeft)
         // Let d3 find the best order to reduce crossings
         .nodeSort(null)
@@ -1269,7 +1323,7 @@
     function enforceValueHeights(graph, height) {
       const padding = 8;
       const byDepth = d3.group(graph.nodes, d => d.depth);
-      const available = Math.max(120, height - 30);
+      const available = Math.max(120, height - 8);
 
       const inflow = new Map();
       const outflow = new Map();
@@ -1300,7 +1354,7 @@
 
       byDepth.forEach(list => {
         list.sort((a, b) => a.y0 - b.y0);
-        let cursor = 10;
+        let cursor = 0;
         list.forEach(n => {
           const h = Math.max(2, desiredValue(n, n.index) * scale);
           n.y0 = cursor;
