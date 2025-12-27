@@ -173,7 +173,7 @@ To print the entire Sankey page that includes the filename  and min viz/font set
 
 ## New Features
 
-### Dynamic date range filtering
+### #1. Dynamic date range filtering
 If a data file contains a column named "Date" (case-sensitive), two new controls will appear across the top: Min Date and Max Date. The initial values are the earliest and latest dates that appear in the current data file. 
 
 ![alt text](images/Sankey_DefaultDate.png)
@@ -182,7 +182,18 @@ Altering dates filters the data file to transactions that fall within the new da
 
 ![alt text](images/Sankey_ChangeDate.png)
 
-To restore back to the original min/max dates, (all transactions) use "Reset dates" button in upper right corner (green box/arrow). Settings for MIN_VIZ, font and suppressed rows remain unchanged.
+[NOTE: The "Reset dates" button (green arrow/box) has been replaced with a drop-down list. See next enhancement]
+
+
+### #2. Preset date ranges (replaces "Reset dates" button)
+New "Date range" drop-down with the following selections (red box):
+- All (default): Sets MinDate and MaxDate to the earliest and latest dates in the loaded file. This replaces/replicates the "Reset dates" button in the previous enhancement.
+- YTD: Sets MinDate to January 1st of the current year. Leaves MaxDate to latest date in loaded file.
+- Last Year: Sets MinDate to January 1 and MaxDate to December 31 of the previous year.
+- Rolling 12mo: Sets MinDate to 1 year earlier than MaxDate.
+- Custom: Option only appears if any date is **manually** entered into either MinDate or MaxDate. Any manually-entered date changes selection to "Custom", even if that date replicates "YTD", "Last Year", or "Rolling 12mo" options.
+
+![alt text](images/Sankey_DateRanges.png)
 
 ---
 
