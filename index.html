@@ -123,11 +123,31 @@
       border-radius: 12px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, 0.18);
       width: min(1100px, 96vw);
-      max-height: 85vh;
+      height: min(85vh, 720px);
+      max-width: 96vw;
+      max-height: 90vh;
+      min-width: 640px;
+      min-height: 360px;
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
       display: flex;
       flex-direction: column;
       border: 1px solid #e5e7eb;
       overflow: hidden;
+      resize: both;
+    }
+    .modal-resizer {
+      position: absolute;
+      right: 4px;
+      bottom: 4px;
+      width: 18px;
+      height: 18px;
+      cursor: se-resize;
+      z-index: 2;
+      touch-action: none;
+      background: linear-gradient(135deg, transparent 60%, #cbd5e1 60%, #cbd5e1 70%, transparent 70%, transparent 80%, #cbd5e1 80%, #cbd5e1 90%, transparent 90%);
     }
     .modal-header {
       display: flex;
@@ -136,6 +156,7 @@
       padding: 16px 18px 12px;
       border-bottom: 1px solid #e5e7eb;
       gap: 12px;
+      cursor: move;
     }
     .modal-title {
       font-size: 18px;
@@ -165,8 +186,32 @@
       border-bottom: 1px solid #e5e7eb;
     }
     .modal-table-wrap {
-      overflow: auto;
+      overflow-x: scroll;
+      overflow-y: scroll;
+      scrollbar-gutter: stable both-edges;
+      scrollbar-width: thin;
+      scrollbar-color: #cbd5e1 #f3f4f6;
       padding: 4px 18px 18px;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+    .modal-table-wrap::-webkit-scrollbar {
+      width: 12px !important;
+      height: 15px !important;
+    }
+    .modal-table-wrap::-webkit-scrollbar:horizontal {
+      height: 15px !important;
+    }
+    .modal-table-wrap::-webkit-scrollbar-track {
+      background: #f3f4f6;
+    }
+    .modal-table-wrap::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 999px;
+      border: 3px solid #f3f4f6;
+    }
+    .modal-table-wrap::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
     }
     table.modal-table {
       width: 100%;
@@ -247,8 +292,11 @@
             <option value="all" selected>All</option>
             <option value="custom" id="date-range-custom" hidden>Custom</option>
             <option value="ytd">YTD</option>
-            <option value="last-year">Last Year</option>
+            <option value="cy-1" id="date-range-cy-1">CY</option>
+            <option value="cy-2" id="date-range-cy-2">CY</option>
+            <option value="cy-3" id="date-range-cy-3">CY</option>
             <option value="rolling-12mo">Rolling 12mo</option>
+            <option value="rolling-24mo">Rolling 24mo</option>
           </select>
         </label>
       </div>
@@ -295,6 +343,7 @@
         </table>
         <div class="modal-empty" id="modal-empty" style="display:none;">No rows available for this node.</div>
       </div>
+      <div class="modal-resizer" aria-hidden="true"></div>
     </div>
   </div>
 
@@ -315,12 +364,19 @@
     const dateRangeWrapper = document.getElementById('date-range-wrapper');
     const dateRangeSelect = document.getElementById('date-range');
     const dateRangeCustomOption = document.getElementById('date-range-custom');
+    const dateRangeCy1Option = document.getElementById('date-range-cy-1');
+    const dateRangeCy2Option = document.getElementById('date-range-cy-2');
+    const dateRangeCy3Option = document.getElementById('date-range-cy-3');
     const exportFormat = document.getElementById('export-format');
     const exportBtn = document.getElementById('export-btn');
     const resetSuppressedBtn = document.getElementById('reset-suppressed');
     const modalBackdrop = document.getElementById('details-backdrop');
+    const modalEl = document.querySelector('.modal');
+    const modalHeaderEl = modalEl ? modalEl.querySelector('.modal-header') : null;
+    const modalResizer = modalEl ? modalEl.querySelector('.modal-resizer') : null;
     const modalTitle = document.getElementById('modal-title');
     const modalSubtitle = document.getElementById('modal-subtitle');
+    const modalTableWrap = document.querySelector('.modal-table-wrap');
     const modalRowsBody = document.getElementById('modal-rows');
     const modalHeaderRow = document.getElementById('modal-header-row');
     const modalEmpty = document.getElementById('modal-empty');
@@ -331,6 +387,15 @@
     let modalRowsData = [];
     let lastHeaders = [];
     let modalSort = { key: 'Category', dir: 'asc' };
+    let isModalDragging = false;
+    let modalDragOffsetX = 0;
+    let modalDragOffsetY = 0;
+    let isModalResizing = false;
+    let modalResizeStart = null;
+    let isInScrollbarGutter = false;
+    let lastScrollbarNudge = 0;
+    let lastModalPointerDown = 0;
+    let isModalPointerDown = false;
     let suppressedRowNumbers = new Set();
     let baseRows = [];
     let activeDateKey = null;
@@ -341,6 +406,7 @@
     const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
+    updateCalendarYearOptions();
     setCurrentFileName(currentFileName);
     updateThresholdLabel();
 
@@ -349,7 +415,34 @@
     }
     if (modalBackdrop) {
       modalBackdrop.addEventListener('click', (e) => {
-        if (e.target === modalBackdrop) hideModal();
+        if (e.target !== modalBackdrop) return;
+        if (isModalPointerDown || Date.now() - lastModalPointerDown < 2000) {
+          lastModalPointerDown = 0;
+          return;
+        }
+        hideModal();
+      });
+    }
+    if (modalEl) {
+      modalEl.addEventListener('pointerdown', () => {
+        isModalPointerDown = true;
+        lastModalPointerDown = Date.now();
+      });
+    }
+    document.addEventListener('pointerup', () => {
+      isModalPointerDown = false;
+    });
+    if (modalResizer && modalEl) {
+      modalResizer.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        startModalResize(event);
+      });
+    }
+    if (modalHeaderEl && modalEl) {
+      modalHeaderEl.addEventListener('mousedown', (event) => {
+        if (event.button !== 0) return;
+        if (event.target.closest('.modal-close')) return;
+        startModalDrag(event);
       });
     }
     if (downloadRowsBtn) {
@@ -405,6 +498,12 @@
         applyDateRangePreset(dateRangeSelect.value);
       });
     }
+    if (modalTableWrap) {
+      modalTableWrap.addEventListener('mousemove', handleScrollbarGutterHover);
+      modalTableWrap.addEventListener('mouseleave', () => {
+        isInScrollbarGutter = false;
+      });
+    }
 
     function setCurrentFileName(name) {
       currentFileName = name || 'quicken_export.xlsx';
@@ -434,6 +533,143 @@
       if (document.getElementById('threshold-label')) {
         document.getElementById('threshold-label').textContent = MIN_VIZ.toLocaleString('en-US');
       }
+    }
+
+    function handleScrollbarGutterHover(event) {
+      if (!modalTableWrap) return;
+      const rect = modalTableWrap.getBoundingClientRect();
+      const gutterSize = 16;
+      const inGutter = event.clientX >= rect.right - gutterSize || event.clientY >= rect.bottom - gutterSize;
+      if (inGutter && !isInScrollbarGutter) {
+        isInScrollbarGutter = true;
+        nudgeScrollbars();
+      } else if (!inGutter && isInScrollbarGutter) {
+        isInScrollbarGutter = false;
+      }
+    }
+
+    function nudgeScrollbars() {
+      if (!modalTableWrap) return;
+      const now = Date.now();
+      if (now - lastScrollbarNudge < 400) return;
+      lastScrollbarNudge = now;
+      const left = modalTableWrap.scrollLeft;
+      const top = modalTableWrap.scrollTop;
+      modalTableWrap.scrollLeft = left + 1;
+      modalTableWrap.scrollTop = top + 1;
+      modalTableWrap.scrollLeft = left;
+      modalTableWrap.scrollTop = top;
+    }
+
+    function startModalDrag(event) {
+      if (!modalEl) return;
+      const rect = modalEl.getBoundingClientRect();
+      modalEl.style.left = `${rect.left}px`;
+      modalEl.style.top = `${rect.top}px`;
+      modalEl.style.transform = 'none';
+      isModalDragging = true;
+      modalDragOffsetX = event.clientX - rect.left;
+      modalDragOffsetY = event.clientY - rect.top;
+      document.addEventListener('mousemove', onModalDrag);
+      document.addEventListener('mouseup', stopModalDrag);
+      event.preventDefault();
+    }
+
+    function onModalDrag(event) {
+      if (!isModalDragging || !modalEl) return;
+      const maxLeft = Math.max(0, window.innerWidth - modalEl.offsetWidth);
+      const maxTop = Math.max(0, window.innerHeight - modalEl.offsetHeight);
+      const nextLeft = Math.min(Math.max(0, event.clientX - modalDragOffsetX), maxLeft);
+      const nextTop = Math.min(Math.max(0, event.clientY - modalDragOffsetY), maxTop);
+      modalEl.style.left = `${nextLeft}px`;
+      modalEl.style.top = `${nextTop}px`;
+    }
+
+    function stopModalDrag() {
+      if (!isModalDragging) return;
+      isModalDragging = false;
+      document.removeEventListener('mousemove', onModalDrag);
+      document.removeEventListener('mouseup', stopModalDrag);
+    }
+
+    function startModalResize(event) {
+      if (!modalEl) return;
+      const rect = modalEl.getBoundingClientRect();
+      modalResizeStart = {
+        x: event.clientX,
+        y: event.clientY,
+        width: rect.width,
+        height: rect.height,
+        left: rect.left,
+        top: rect.top
+      };
+      modalEl.style.left = `${rect.left}px`;
+      modalEl.style.top = `${rect.top}px`;
+      modalEl.style.transform = 'none';
+      isModalResizing = true;
+      if (event.pointerId != null && modalResizer) {
+        modalResizer.setPointerCapture(event.pointerId);
+      }
+      document.addEventListener('pointermove', onModalResize);
+      document.addEventListener('pointerup', stopModalResize);
+      event.preventDefault();
+    }
+
+    function onModalResize(event) {
+      if (!isModalResizing || !modalEl || !modalResizeStart) return;
+      const minWidth = 640;
+      const minHeight = 360;
+      const maxWidth = window.innerWidth - modalResizeStart.left;
+      const maxHeight = window.innerHeight - modalResizeStart.top;
+      const nextWidth = Math.min(
+        Math.max(minWidth, modalResizeStart.width + (event.clientX - modalResizeStart.x)),
+        Math.max(minWidth, maxWidth)
+      );
+      const nextHeight = Math.min(
+        Math.max(minHeight, modalResizeStart.height + (event.clientY - modalResizeStart.y)),
+        Math.max(minHeight, maxHeight)
+      );
+      modalEl.style.width = `${nextWidth}px`;
+      modalEl.style.height = `${nextHeight}px`;
+    }
+
+    function stopModalResize(event) {
+      if (!isModalResizing) return;
+      isModalResizing = false;
+      modalResizeStart = null;
+      document.removeEventListener('pointermove', onModalResize);
+      document.removeEventListener('pointerup', stopModalResize);
+      if (event && event.pointerId != null && modalResizer) {
+        modalResizer.releasePointerCapture(event.pointerId);
+      }
+    }
+
+    function normalizeModalPosition() {
+      if (!modalEl) return;
+      const rect = modalEl.getBoundingClientRect();
+      const maxLeft = Math.max(0, window.innerWidth - rect.width);
+      const maxTop = Math.max(0, window.innerHeight - rect.height);
+      const nextLeft = Math.min(Math.max(0, rect.left), maxLeft);
+      const nextTop = Math.min(Math.max(0, rect.top), maxTop);
+      modalEl.style.left = `${nextLeft}px`;
+      modalEl.style.top = `${nextTop}px`;
+      modalEl.style.transform = 'none';
+    }
+
+    function updateCalendarYearOptions() {
+      const now = new Date();
+      const currentYear = now.getFullYear();
+      const defs = [
+        { offset: 1, el: dateRangeCy1Option },
+        { offset: 2, el: dateRangeCy2Option },
+        { offset: 3, el: dateRangeCy3Option }
+      ];
+      defs.forEach(({ offset, el }) => {
+        if (!el) return;
+        const year = currentYear - offset;
+        el.textContent = `CY ${year}`;
+        el.dataset.year = String(year);
+      });
     }
 
     function setDateControls(dateKey, range) {
@@ -511,14 +747,30 @@
         const year = now.getFullYear();
         minLabel = formatDateInput(new Date(year, 0, 1).getTime());
         maxLabel = formatDateInput(now.getTime());
-      } else if (preset === 'last-year') {
-        const year = new Date().getFullYear() - 1;
-        minLabel = formatDateInput(new Date(year, 0, 1).getTime());
-        maxLabel = formatDateInput(new Date(year, 11, 31).getTime());
+      } else if (preset.startsWith('cy-')) {
+        const option = dateRangeSelect
+          ? dateRangeSelect.querySelector(`option[value="${preset}"]`)
+          : null;
+        const datasetYear = option?.dataset?.year ? Number(option.dataset.year) : null;
+        let year = Number.isFinite(datasetYear) ? datasetYear : null;
+        if (!Number.isFinite(year)) {
+          const offset = Number(preset.split('-')[1]);
+          if (Number.isFinite(offset)) year = new Date().getFullYear() - offset;
+        }
+        if (Number.isFinite(year)) {
+          minLabel = formatDateInput(new Date(year, 0, 1).getTime());
+          maxLabel = formatDateInput(new Date(year, 11, 31).getTime());
+        }
       } else if (preset === 'rolling-12mo') {
         const maxDate = new Date(dateBounds.max);
         const minDate = new Date(dateBounds.max);
         minDate.setMonth(minDate.getMonth() - 12);
+        minLabel = formatDateInput(minDate.getTime());
+        maxLabel = formatDateInput(maxDate.getTime());
+      } else if (preset === 'rolling-24mo') {
+        const maxDate = new Date(dateBounds.max);
+        const minDate = new Date(dateBounds.max);
+        minDate.setMonth(minDate.getMonth() - 24);
         minLabel = formatDateInput(minDate.getTime());
         maxLabel = formatDateInput(maxDate.getTime());
       } else {
@@ -1113,6 +1365,7 @@
       }
       renderModalRows(rows, lastHeaders);
       modalBackdrop.style.display = 'flex';
+      requestAnimationFrame(normalizeModalPosition);
     }
 
     function renderModalRows(rows, headers = []) {

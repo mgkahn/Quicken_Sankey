@@ -133,7 +133,7 @@ There is no hovering behavior for data nodes.
 ![alt text](images/Sankey_DefaultData.png)
 
 
-All columns from the raw data file are included. The "Export Row #" (red box) is the original row number from the Quicken XLSX file (red box). The default sort order is by Category-ascending as noted by the up-caret.
+All columns from the raw data file are included. The "Export Row #" (red box) is the original row number from the Quicken XLSX file (red box). The default sort order is by Category-ascending as noted by the up-caret. The table is movable, resizable (in lower right corner), and can scroll vertically or horizontally.
 
 The next two figures show changing the sort order to Amount-ascending (most negative expenses to least negative expenses) and Amount-descending (least negative to most negative) by clicking on the column header. 
 
@@ -189,8 +189,11 @@ Altering dates filters the data file to transactions that fall within the new da
 New "Date range" drop-down with the following selections (red box):
 - All (default): Sets MinDate and MaxDate to the earliest and latest dates in the loaded file. This replaces/replicates the "Reset dates" button in the previous enhancement.
 - YTD: Sets MinDate to January 1st of the current year. Leaves MaxDate to latest date in loaded file.
-- Last Year: Sets MinDate to January 1 and MaxDate to December 31 of the previous year.
+- CY XXXX where XXXX is the previous calendar year from the current date
+- CY YYYY where YYYY is two calendar years ago from the current date
+- CY ZZZZ where ZZZZ is three calendar years ago from the current date.
 - Rolling 12mo: Sets MinDate to 1 year earlier than MaxDate.
+- Rolling 24mo: Sets Mindate to 2 years earlier than MaxDate
 - Custom: Option only appears if any date is **manually** entered into either MinDate or MaxDate. Any manually-entered date changes selection to "Custom", even if that date replicates "YTD", "Last Year", or "Rolling 12mo" options.
 
 ![alt text](images/Sankey_DateRanges.png)
