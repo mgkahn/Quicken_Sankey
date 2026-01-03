@@ -258,7 +258,7 @@
 </head>
 <body>
   <header>
-    <h1 id="title">Sankey Overview - quicken_export.xlsx</h1>
+    <h1 id="title">Sankey Overview - quicken_export-clean.xlsx</h1>
   </header>
   <div class="controls">
     <div class="controls-left">
@@ -267,7 +267,7 @@
           Load another file
           <input id="file-input" type="file" accept=".xlsx" style="display:none">
         </label>
-        <span class="status" id="status">Loading quicken_export.xlsx...</span>
+        <span class="status" id="status">Loading quicken_export-clean.xlsx...</span>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
           Min threshold $
           <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
@@ -383,7 +383,7 @@
     const modalCloseBtn = document.getElementById('modal-close');
     const downloadRowsBtn = document.getElementById('download-rows');
     const ROW_NUMBER_KEY = '__row_number__';
-    let currentFileName = 'quicken_export.xlsx';
+    let currentFileName = 'quicken_export-clean.xlsx';
     let modalRowsData = [];
     let lastHeaders = [];
     let modalSort = { key: 'Category', dir: 'asc' };
@@ -506,7 +506,7 @@
     }
 
     function setCurrentFileName(name) {
-      currentFileName = name || 'quicken_export.xlsx';
+      currentFileName = name || 'quicken_export-clean.xlsx';
       if (titleEl) {
         titleEl.textContent = `Sankey Overview - ${currentFileName}`;
       }
@@ -842,7 +842,7 @@
         const payload = {
           rows: Array.isArray(rows) ? rows : [],
           headers: Array.isArray(headers) ? headers : [],
-          fileName: fileName || 'quicken_export.xlsx',
+          fileName: fileName || 'quicken_export-clean.xlsx',
           dateKey: dateKey || null,
           dateRange: dateRange || null
         };
@@ -859,13 +859,19 @@
       try {
         const data = JSON.parse(raw);
         if (!data || !Array.isArray(data.rows) || !data.rows.length) return false;
+        const cachedRows = data.rows.filter((row) => {
+          const rawAmount = Number(row?.raw?.Amount);
+          if (Number.isFinite(rawAmount)) return rawAmount < 0;
+          return true;
+        });
+        if (!cachedRows.length) return false;
         userSelectedFile = true;
-        setCurrentFileName(data.fileName || 'quicken_export.xlsx');
+        setCurrentFileName(data.fileName || 'quicken_export-clean.xlsx');
         lastHeaders = Array.isArray(data.headers) ? data.headers : [];
-        const dateKey = data.dateKey || findDateKey(lastHeaders, data.rows);
-        const dateRange = data.dateRange || (dateKey ? getDateRange(data.rows, dateKey) : null);
+        const dateKey = data.dateKey || findDateKey(lastHeaders, cachedRows);
+        const dateRange = data.dateRange || (dateKey ? getDateRange(cachedRows, dateKey) : null);
         setDateControls(dateKey, dateRange);
-        setBaseRows(data.rows);
+        setBaseRows(cachedRows);
         renderFromRows();
         statusEl.textContent = `Loaded cached data from ${data.fileName || 'selected file'}.`;
         return true;
@@ -897,14 +903,14 @@
     async function loadDefaultWorkbook() {
       if (userSelectedFile) return;
       try {
-        const resp = await fetch('quicken_export.xlsx');
+        const resp = await fetch('quicken_export-clean.xlsx');
         if (!resp.ok) throw new Error('Default workbook not found.');
         const buffer = await resp.arrayBuffer();
         if (userSelectedFile) return;
-        await renderFromArrayBuffer(buffer, 'quicken_export.xlsx', { isDefault: true });
+        await renderFromArrayBuffer(buffer, 'quicken_export-clean.xlsx', { isDefault: true });
       } catch (err) {
         statusEl.textContent = 'Pick a file to render.';
-        setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
+        setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export-clean.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
       }
     }
 
@@ -944,7 +950,7 @@
       }
     });
 
-    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx', opts = {}) {
+    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export-clean.xlsx', opts = {}) {
       const isDefault = opts && opts.isDefault;
       if (isDefault && userSelectedFile) return;
       try {
@@ -1270,6 +1276,8 @@
 
       const width = Math.max(1600, Math.min(1200, container.clientWidth - 12));
       const height = Math.max(800, Math.min(container.clientHeight, window.innerHeight - 140));
+      const topPadding = 30;
+      const bottomPadding = 30;
       const svg = d3.select(container)
         .append('svg')
         .attr('width', width)
@@ -1281,7 +1289,7 @@
         .nodeId((d, i) => i)
         .nodeWidth(12)
         .nodePadding(70)
-        .extent([[0, 0], [width, height]])
+        .extent([[0, topPadding], [width, height - bottomPadding]])
         .nodeAlign(d3.sankeyLeft)
         // Let d3 find the best order to reduce crossings
         .nodeSort(null)
@@ -1293,7 +1301,7 @@
         links: links.map(d => Object.assign({}, d))
       });
 
-      enforceValueHeights(graph, height);
+      enforceValueHeights(graph, height, topPadding, bottomPadding);
       const newHeight = Math.max(
         height,
         d3.max(graph.nodes, d => d.y1 || 0) + 20
@@ -1573,10 +1581,10 @@
       }
     }
 
-    function enforceValueHeights(graph, height) {
+    function enforceValueHeights(graph, height, topPadding = 0, bottomPadding = 0) {
       const padding = 8;
       const byDepth = d3.group(graph.nodes, d => d.depth);
-      const available = Math.max(120, height - 8);
+      const available = Math.max(120, height - topPadding - bottomPadding - 8);
 
       const inflow = new Map();
       const outflow = new Map();
@@ -1607,7 +1615,7 @@
 
       byDepth.forEach(list => {
         list.sort((a, b) => a.y0 - b.y0);
-        let cursor = 0;
+        let cursor = topPadding;
         list.forEach(n => {
           const h = Math.max(2, desiredValue(n, n.index) * scale);
           n.y0 = cursor;
