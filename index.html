@@ -258,7 +258,7 @@
 </head>
 <body>
   <header>
-    <h1 id="title">Sankey Overview - quicken_export-clean.xlsx</h1>
+    <h1 id="title">Sankey Overview - quicken_export.xlsx</h1>
   </header>
   <div class="controls">
     <div class="controls-left">
@@ -267,7 +267,7 @@
           Load another file
           <input id="file-input" type="file" accept=".xlsx" style="display:none">
         </label>
-        <span class="status" id="status">Loading quicken_export-clean.xlsx...</span>
+        <span class="status" id="status">Loading quicken_export.xlsx...</span>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
           Min threshold $
           <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
@@ -383,7 +383,7 @@
     const modalCloseBtn = document.getElementById('modal-close');
     const downloadRowsBtn = document.getElementById('download-rows');
     const ROW_NUMBER_KEY = '__row_number__';
-    let currentFileName = 'quicken_export-clean.xlsx';
+    let currentFileName = 'quicken_export.xlsx';
     let modalRowsData = [];
     let lastHeaders = [];
     let modalSort = { key: 'Category', dir: 'asc' };
@@ -506,7 +506,7 @@
     }
 
     function setCurrentFileName(name) {
-      currentFileName = name || 'quicken_export-clean.xlsx';
+      currentFileName = name || 'quicken_export.xlsx';
       if (titleEl) {
         titleEl.textContent = `Sankey Overview - ${currentFileName}`;
       }
@@ -805,6 +805,7 @@
       const file = e.target.files[0];
       if (!file) return;
       userSelectedFile = true;
+      setCurrentFileName(file.name);
       statusEl.textContent = `Reading ${file.name}...`;
       readFileAsArrayBuffer(file)
         .then(buffer => renderFromArrayBuffer(buffer, file.name))
@@ -837,24 +838,24 @@
     }
 
     function saveUserState(rows, headers, fileName, dateKey, dateRange) {
-      if (!window.localStorage) return;
+      if (!window.sessionStorage) return;
       try {
         const payload = {
           rows: Array.isArray(rows) ? rows : [],
           headers: Array.isArray(headers) ? headers : [],
-          fileName: fileName || 'quicken_export-clean.xlsx',
+          fileName: fileName || 'quicken_export.xlsx',
           dateKey: dateKey || null,
           dateRange: dateRange || null
         };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
       } catch (err) {
         console.warn('Unable to persist user-selected data file.', err);
       }
     }
 
     function tryRestoreUserState() {
-      if (!window.localStorage) return false;
-      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!window.sessionStorage) return false;
+      const raw = sessionStorage.getItem(STORAGE_KEY);
       if (!raw) return false;
       try {
         const data = JSON.parse(raw);
@@ -866,7 +867,7 @@
         });
         if (!cachedRows.length) return false;
         userSelectedFile = true;
-        setCurrentFileName(data.fileName || 'quicken_export-clean.xlsx');
+        setCurrentFileName(data.fileName || 'quicken_export.xlsx');
         lastHeaders = Array.isArray(data.headers) ? data.headers : [];
         const dateKey = data.dateKey || findDateKey(lastHeaders, cachedRows);
         const dateRange = data.dateRange || (dateKey ? getDateRange(cachedRows, dateKey) : null);
@@ -903,14 +904,14 @@
     async function loadDefaultWorkbook() {
       if (userSelectedFile) return;
       try {
-        const resp = await fetch('quicken_export-clean.xlsx');
+        const resp = await fetch('quicken_export.xlsx');
         if (!resp.ok) throw new Error('Default workbook not found.');
         const buffer = await resp.arrayBuffer();
         if (userSelectedFile) return;
-        await renderFromArrayBuffer(buffer, 'quicken_export-clean.xlsx', { isDefault: true });
+        await renderFromArrayBuffer(buffer, 'quicken_export.xlsx', { isDefault: true });
       } catch (err) {
         statusEl.textContent = 'Pick a file to render.';
-        setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export-clean.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
+        setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
       }
     }
 
@@ -950,7 +951,7 @@
       }
     });
 
-    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export-clean.xlsx', opts = {}) {
+    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx', opts = {}) {
       const isDefault = opts && opts.isDefault;
       if (isDefault && userSelectedFile) return;
       try {
@@ -1132,14 +1133,79 @@
       return { min, max };
     }
 
+    function isBlankValue(value) {
+      return value == null || (typeof value === 'string' && value.trim() === '');
+    }
+
+    function trimQuickenRows(rows) {
+      const trimmedTop = rows.length > 4 ? rows.slice(4) : [];
+      let totalInflowsRow = -1;
+      for (let i = 0; i < trimmedTop.length; i += 1) {
+        if (trimmedTop[i]?.[1] === 'TOTAL INFLOWS') {
+          totalInflowsRow = i;
+          break;
+        }
+      }
+      if (totalInflowsRow === -1) return trimmedTop;
+      const startDelete = Math.max(0, totalInflowsRow - 2);
+      return trimmedTop.slice(0, startDelete);
+    }
+
+    function findHeaderColumnIndex(rows, headerName) {
+      if (!rows.length) return null;
+      const headers = Array.isArray(rows[0]) ? rows[0] : [];
+      const target = headerName.trim().toLowerCase();
+      for (let i = 0; i < headers.length; i += 1) {
+        const cell = headers[i];
+        if (typeof cell === 'string' && cell.trim().toLowerCase() === target) {
+          return i;
+        }
+      }
+      return null;
+    }
+
+    function downfillColumn(rows, colIndex, isRealValue = (value) => !isBlankValue(value)) {
+      if (colIndex == null || colIndex < 0) return;
+      let lastValue = null;
+      for (let i = 1; i < rows.length; i += 1) {
+        if (!Array.isArray(rows[i])) rows[i] = [];
+        const row = rows[i];
+        const value = row[colIndex];
+        if (isRealValue(value)) {
+          lastValue = value;
+          continue;
+        }
+        if (isBlankValue(value) && lastValue != null) {
+          row[colIndex] = lastValue;
+        }
+      }
+    }
+
+    function isRealDateValue(value) {
+      return parseDateValue(value) != null;
+    }
+
     function extractRows(workbook) {
       const firstSheet = workbook.SheetNames[0];
       const sheet = workbook.Sheets[firstSheet];
-      const rowsRaw = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: true, cellDates: true });
       const headerRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true, cellDates: true });
-      const headers = Array.isArray(headerRows?.[0])
-        ? headerRows[0].filter(h => String(h || '').trim() !== '')
-        : (rowsRaw[0] ? Object.keys(rowsRaw[0]) : []);
+      const trimmedRows = trimQuickenRows(headerRows);
+      const headerRow = Array.isArray(trimmedRows[0]) ? trimmedRows[0] : [];
+      const headers = headerRow.filter(h => String(h || '').trim() !== '');
+      const dateColIndex = findHeaderColumnIndex(trimmedRows, 'Date');
+      const descColIndex = findHeaderColumnIndex(trimmedRows, 'Description');
+      downfillColumn(trimmedRows, dateColIndex, isRealDateValue);
+      downfillColumn(trimmedRows, descColIndex);
+      const rowsRaw = trimmedRows.slice(1).map((row) => {
+        const out = {};
+        if (!Array.isArray(row)) return out;
+        headerRow.forEach((header, idx) => {
+          const key = String(header || '').trim();
+          if (!key) return;
+          out[key] = row[idx];
+        });
+        return out;
+      });
       const normalizedRows = rowsRaw.map(normalizeRow);
       const dateKey = findDateKey(headers, normalizedRows);
       const dateRange = dateKey ? getDateRange(normalizedRows, dateKey) : null;
