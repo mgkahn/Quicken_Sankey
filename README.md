@@ -129,9 +129,9 @@ There is no hovering behavior for data nodes.
 
 ---
 
-**RIGHT clicking** on a data node does nothing (currently).
+**LEFT clicking** on a data node does nothing (currently).
 
-**LEFT clicking** on a data node generates a pop-up table containing the raw data rows contained this node and all children data nodes (red arrows/boxes). 
+**RIGHT clicking** on a data node generates a pop-up table containing the raw data rows contained this node and all children data nodes (red arrows/boxes). 
 
 ![alt text](images/Sankey_DataRightClick.png)
 
@@ -152,9 +152,9 @@ The "download rows" button on the top right side of the table (green box) downlo
 
 ---
 
-**RIGHT clicking** on a flow/link does nothing (currently). 
+**LEFT clicking** on a flow/link does nothing (currently). 
 
-**LEFT clicking** on any flow/link brings up a dialog box that allows you to remove (suppress) the data in that flow and all downstream children flows. This example right-clicks on the Taxes flow. Clicking "OK" removes all transactions associated with that category and all children subcategories. The Sankey chart is redrawn with these transactions removed. Suppression can be applied at any level in the category hierarchy.
+**RIGHT clicking** on any flow/link brings up a dialog box that allows you to remove (suppress) the data in that flow and all downstream children flows. This example right-clicks on the Taxes flow. Clicking "OK" removes all transactions associated with that category and all children subcategories. The Sankey chart is redrawn with these transactions removed. Suppression can be applied at any level in the category hierarchy.
 
 ![alt text](images/Sankey_SuppressRows.png)
 

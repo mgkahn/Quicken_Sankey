@@ -270,7 +270,7 @@
         <span class="status" id="status">Loading quicken_export.xlsx...</span>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
           Min threshold $
-          <input id="min-viz" type="number" min="0" step="100" value="5000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+          <input id="min-viz" type="number" min="0" step="100" value="1000" style="width:90px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
         </label>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
           Font size
@@ -349,7 +349,7 @@
   </div>
 
 <script>
-    let MIN_VIZ = 5000;
+    let MIN_VIZ = 1000;
     let FONT_SIZE = 10;
     const titleEl = document.getElementById('title');
     const fileLabelEl = document.getElementById('file-label');
@@ -924,7 +924,7 @@
 
     thresholdInput.addEventListener('change', () => {
       const val = Number(thresholdInput.value);
-      MIN_VIZ = Number.isFinite(val) && val >= 0 ? val : 5000;
+      MIN_VIZ = Number.isFinite(val) && val >= 0 ? val : 1000;
       thresholdInput.value = MIN_VIZ;
       updateThresholdLabel();
       if (baseRows.length) {
@@ -1397,7 +1397,10 @@
         .attr('stroke-width', d => Math.max(1, d.width))
         .on('mousemove', (event, d) => showTooltip(event, d, formatValue))
         .on('mouseleave', hideTooltip)
-        .on('click', (event, d) => promptSuppression(event, d.target));
+        .on('contextmenu', (event, d) => {
+          event.preventDefault();
+          promptSuppression(event, d.target);
+        });
 
       const node = svg.append('g')
         .selectAll('g')
@@ -1405,7 +1408,8 @@
         .join('g')
         .attr('class', 'node')
         .attr('transform', d => `translate(${d.x0},${d.y0})`)
-        .on('click', (event, d) => {
+        .on('contextmenu', (event, d) => {
+          event.preventDefault();
           showNodeDetails(d);
         });
 
