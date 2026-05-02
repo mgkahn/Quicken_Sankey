@@ -276,6 +276,13 @@
           Font size
           <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
         </label>
+        <label class="status" style="display:flex;align-items:center;gap:6px;">
+          Display Currency
+          <select id="display-currency" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+            <option value="AmountUSD" selected>AmountUSD</option>
+            <option value="AmountNZD">AmountNZD</option>
+          </select>
+        </label>
         <div class="date-controls" id="date-controls" style="display:none;">
           <label class="status" style="display:flex;align-items:center;gap:6px;">
             Min date
@@ -285,21 +292,21 @@
             Max date
             <input id="max-date" type="date" class="date-input">
           </label>
+          <label id="date-range-wrapper" class="status" style="display:none;align-items:center;gap:6px;">
+            Date range
+            <select id="date-range" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
+              <option value="all" selected>All</option>
+              <option value="custom" id="date-range-custom" hidden>Custom</option>
+              <option value="ytd">YTD</option>
+              <option value="cy-1" id="date-range-cy-1">CY</option>
+              <option value="cy-2" id="date-range-cy-2">CY</option>
+              <option value="cy-3" id="date-range-cy-3">CY</option>
+              <option value="rolling-12mo">Rolling 12mo</option>
+              <option value="rolling-24mo">Rolling 24mo</option>
+              <option value="rolling-36mo">Rolling 36mo</option>
+            </select>
+          </label>
         </div>
-        <label id="date-range-wrapper" class="status" style="display:none;align-items:center;gap:6px;">
-          Date range
-          <select id="date-range" style="padding:6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
-            <option value="all" selected>All</option>
-            <option value="custom" id="date-range-custom" hidden>Custom</option>
-            <option value="ytd">YTD</option>
-            <option value="cy-1" id="date-range-cy-1">CY</option>
-            <option value="cy-2" id="date-range-cy-2">CY</option>
-            <option value="cy-3" id="date-range-cy-3">CY</option>
-            <option value="rolling-12mo">Rolling 12mo</option>
-            <option value="rolling-24mo">Rolling 24mo</option>
-            <option value="rolling-36mo">Rolling 36mo</option>
-          </select>
-        </label>
       </div>
       <div class="controls-row">
         <label class="status" style="display:flex;align-items:center;gap:6px;">
@@ -337,7 +344,7 @@
             <tr id="modal-header-row">
               <th>Row #</th>
               <th>Category</th>
-              <th>Amount</th>
+              <th>AmountUSD</th>
             </tr>
           </thead>
           <tbody id="modal-rows"></tbody>
@@ -351,6 +358,9 @@
 <script>
     let MIN_VIZ = 1000;
     let FONT_SIZE = 10;
+    // US dollar to NZ dollar conversion rate
+    const USD_NZD = 0.65;
+    let DISPLAY_CURRENCY = 'AmountUSD';
     const titleEl = document.getElementById('title');
     const fileLabelEl = document.getElementById('file-label');
     const statusEl = document.getElementById('status');
@@ -359,6 +369,7 @@
     const fileInput = document.getElementById('file-input');
     const thresholdInput = document.getElementById('min-viz');
     const fontSizeInput = document.getElementById('font-size');
+    const displayCurrencySelect = document.getElementById('display-currency');
     const dateControls = document.getElementById('date-controls');
     const minDateInput = document.getElementById('min-date');
     const maxDateInput = document.getElementById('max-date');
@@ -407,6 +418,7 @@
     const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
+    if (displayCurrencySelect) displayCurrencySelect.value = DISPLAY_CURRENCY;
     updateCalendarYearOptions();
     setCurrentFileName(currentFileName);
     updateThresholdLabel();
@@ -830,6 +842,7 @@
 
     function setBaseRows(rows) {
       baseRows = Array.isArray(rows) ? rows.slice() : [];
+      updateBaseRowAmounts();
       if (activeDateKey) {
         baseRows.forEach((row) => {
           if (!Number.isFinite(row.dateTimestamp)) {
@@ -842,6 +855,15 @@
       window.__baseRows = baseRows;
       window.__suppressedRowNumbers = suppressedRowNumbers;
       window.__lastRows = baseRows;
+    }
+
+    function updateBaseRowAmounts() {
+      baseRows.forEach((row) => {
+        const rawAmount = getDisplayAmount(row.raw || row);
+        if (Number.isFinite(rawAmount)) {
+          row.amount = Math.abs(rawAmount);
+        }
+      });
     }
 
     function saveUserState(rows, headers, fileName, dateKey, dateRange) {
@@ -867,15 +889,24 @@
       try {
         const data = JSON.parse(raw);
         if (!data || !Array.isArray(data.rows) || !data.rows.length) return false;
-        const cachedRows = data.rows.filter((row) => {
-          const rawAmount = Number(row?.raw?.Amount);
+        const cachedHeaders = normalizeCurrencyHeaders(data.headers || []);
+        const cachedRows = data.rows.map((row) => {
+          const raw = normalizeCurrencyRow(row?.raw || row || {});
+          const displayAmount = getDisplayAmount(raw);
+          return {
+            ...row,
+            raw,
+            amount: Number.isFinite(displayAmount) ? Math.abs(displayAmount) : row.amount
+          };
+        }).filter((row) => {
+          const rawAmount = getDisplayAmount(row?.raw);
           if (Number.isFinite(rawAmount)) return rawAmount < 0;
           return true;
         });
         if (!cachedRows.length) return false;
         userSelectedFile = true;
         setCurrentFileName(data.fileName || 'quicken_export.xlsx');
-        lastHeaders = Array.isArray(data.headers) ? data.headers : [];
+        lastHeaders = cachedHeaders;
         const dateKey = data.dateKey || findDateKey(lastHeaders, cachedRows);
         const dateRange = data.dateRange || (dateKey ? getDateRange(cachedRows, dateKey) : null);
         setDateControls(dateKey, dateRange);
@@ -940,6 +971,16 @@
         renderFromRows();
       }
     });
+
+    if (displayCurrencySelect) {
+      displayCurrencySelect.addEventListener('change', () => {
+        DISPLAY_CURRENCY = displayCurrencySelect.value === 'AmountNZD' ? 'AmountNZD' : 'AmountUSD';
+        updateBaseRowAmounts();
+        if (baseRows.length) {
+          renderFromRows();
+        }
+      });
+    }
 
     exportBtn.addEventListener('click', async () => {
       const svgEl = document.querySelector('#chart svg');
@@ -1068,6 +1109,52 @@
       return out;
     }
 
+    function normalizeCurrencyRow(row) {
+      const out = { ...(row || {}) };
+      const amountUSD = Number(out.AmountUSD ?? out.Amount);
+      if (Number.isFinite(amountUSD)) {
+        out.AmountUSD = amountUSD;
+        out.AmountNZD = Math.round((amountUSD / USD_NZD) * 100) / 100;
+      }
+      delete out.Amount;
+      return out;
+    }
+
+    function normalizeCurrencyHeaders(headers) {
+      const out = [];
+      let amountSeen = false;
+      (headers || []).forEach((header) => {
+        const key = String(header || '').trim();
+        if (!key) return;
+        if (key === 'Amount' || key === 'AmountUSD') {
+          if (!amountSeen) {
+            out.push('AmountUSD', 'AmountNZD');
+            amountSeen = true;
+          }
+          return;
+        }
+        if (key === 'AmountNZD') {
+          if (!amountSeen) {
+            out.push('AmountUSD', 'AmountNZD');
+            amountSeen = true;
+          }
+          return;
+        }
+        out.push(key);
+      });
+      return out;
+    }
+
+    function getDisplayAmount(row) {
+      if (!row) return null;
+      const amount = Number(row[DISPLAY_CURRENCY]);
+      return Number.isFinite(amount) ? amount : null;
+    }
+
+    function getDisplayCurrencyLabel() {
+      return DISPLAY_CURRENCY === 'AmountNZD' ? 'NZD' : 'USD';
+    }
+
     function findDateKey(headers, rows) {
       const headerList = Array.isArray(headers) ? headers : [];
       const exact = headerList.find(h => String(h || '').trim().toLowerCase() === 'date');
@@ -1171,6 +1258,7 @@
       return null;
     }
 
+    // Down-fill helper: carries the last valid cell value into later blank rows.
     function downfillColumn(rows, colIndex, isRealValue = (value) => !isBlankValue(value)) {
       if (colIndex == null || colIndex < 0) return;
       let lastValue = null;
@@ -1198,9 +1286,14 @@
       const headerRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true, cellDates: true });
       const trimmedRows = trimQuickenRows(headerRows);
       const headerRow = Array.isArray(trimmedRows[0]) ? trimmedRows[0] : [];
-      const headers = headerRow.filter(h => String(h || '').trim() !== '');
+      const headers = normalizeCurrencyHeaders(headerRow);
+      const accountColIndex = findHeaderColumnIndex(trimmedRows, 'Account');
+      const categoryColIndex = findHeaderColumnIndex(trimmedRows, 'Category');
       const dateColIndex = findHeaderColumnIndex(trimmedRows, 'Date');
       const descColIndex = findHeaderColumnIndex(trimmedRows, 'Description');
+      // This is the date down-fill path for Quicken exports with blank continuation rows.
+      downfillColumn(trimmedRows, accountColIndex);
+      downfillColumn(trimmedRows, categoryColIndex);
       downfillColumn(trimmedRows, dateColIndex, isRealDateValue);
       downfillColumn(trimmedRows, descColIndex);
       const rowsRaw = trimmedRows.slice(1).map((row) => {
@@ -1213,13 +1306,13 @@
         });
         return out;
       });
-      const normalizedRows = rowsRaw.map(normalizeRow);
+      const normalizedRows = rowsRaw.map(normalizeRow).map(normalizeCurrencyRow);
       const dateKey = findDateKey(headers, normalizedRows);
       const dateRange = dateKey ? getDateRange(normalizedRows, dateKey) : null;
       const expenses = normalizedRows
         .map((row, idx) => {
           const category = String(row.Category || '').trim();
-          const amount = Number(row.Amount);
+          const amount = getDisplayAmount(row);
           const dateTimestamp = dateKey ? parseDateValue(getRowDateValue(row, dateKey)) : null;
           return {
             category,
@@ -1237,7 +1330,7 @@
           dateTimestamp: r.dateTimestamp,
           raw: r.raw
         }));
-      if (!expenses.length) throw new Error('No expenses found. Ensure the sheet has negative Amount values.');
+      if (!expenses.length) throw new Error(`No expenses found. Ensure the sheet has negative ${DISPLAY_CURRENCY} values.`);
       return { expenses, headers, dateKey, dateRange };
     }
 
@@ -1424,7 +1517,7 @@
         .attr('dy', '0.35em')
         .attr('text-anchor', d => d.name === 'Expenses' ? 'start' : 'end')
         .style('font-size', `${FONT_SIZE}px`)
-        .text(d => `${d.name}: $${formatValue(d.value)} USD`);
+        .text(d => `${d.name}: $${formatValue(d.value)} ${getDisplayCurrencyLabel()}`);
 
       window.__lastSvg = svg.node();
       setPlaceholder('');
@@ -1445,7 +1538,7 @@
       }
       if (modalSubtitle) {
         const rowLabel = rows.length === 1 ? 'row' : 'rows';
-        modalSubtitle.textContent = `${rows.length} ${rowLabel} - Total $${formatNumber(node.value || 0)} USD`;
+        modalSubtitle.textContent = `${rows.length} ${rowLabel} - Total $${formatNumber(node.value || 0)} ${getDisplayCurrencyLabel()}`;
       }
       renderModalRows(rows, lastHeaders);
       modalBackdrop.style.display = 'flex';
@@ -1807,7 +1900,7 @@
     function showTooltip(event, d, formatValue) {
       const source = d.source.name;
       const target = d.target.name;
-      const base = `${source} → ${target}: $${formatValue(d.value)} USD`;
+      const base = `${source} → ${target}: $${formatValue(d.value)} ${getDisplayCurrencyLabel()}`;
       const detail = d.aggregatedDetails && d.aggregatedDetails.length
         ? '\n' + d.aggregatedDetails.map(x => `• ${x.name}: $${formatValue(x.value)}`).join('\n')
         : '';
