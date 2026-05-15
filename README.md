@@ -205,6 +205,9 @@ New "Date range" drop-down with the following selections (red box):
 
 ![alt text](images/Sankey_DateRanges.png)
 
+### #3. New control: "Extrapolation factor"
+Allows to pseudo-projection of anticipated future expenses. Uses simple linear multiplication. For example, in July, changing Extrapolation Factor to 2.0 will project the first 6 months of a YTD display to provide simple insight into December's numbers. A simple linear projection will be skewed by any one-time large transaction(s) present in the current data set which can be somewhat fixed by suppressing the Sankey flow that contains these one-time transactions.
+
 ---
 
 __EOF__
