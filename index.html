@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sankey Overview</title>
+  <title>Quicken Sankey</title>
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -275,16 +275,17 @@
 </head>
 <body>
   <header>
-    <h1 id="title">Sankey Overview - quicken_export.xlsx</h1>
+    <h1 id="title">Quicken Sankey</h1>
   </header>
   <div class="controls">
     <div class="controls-left">
       <div class="controls-row">
         <label class="btn">
-          Load another file
+          Load file
           <input id="file-input" type="file" accept=".xlsx" style="display:none">
         </label>
-        <span class="status" id="status">Loading quicken_export.xlsx...</span>
+        <button id="refresh-file" class="btn" type="button">Refresh</button>
+        <span class="status" id="status">Pick a file to render.</span>
         <label class="status" style="display:flex;align-items:center;gap:6px;">
           Font size
           <input id="font-size" type="number" min="6" max="32" step="1" value="10" style="width:72px;padding:4px 6px;border:1px solid #d1d5db;border-radius:8px;font-size:12px;">
@@ -381,7 +382,7 @@
 
 <script>
     let MIN_VIZ = 1000;
-    let FONT_SIZE = 10;
+    let FONT_SIZE = 14;
     // US dollar to NZ dollar conversion rate in Quicken Currency List format
     const USD_NZD = 1.00000/1.53846;
     let DISPLAY_CURRENCY = 'AmountUSD';
@@ -392,6 +393,7 @@
     const tooltip = document.getElementById('tooltip');
     const placeholder = document.getElementById('placeholder');
     const fileInput = document.getElementById('file-input');
+    const refreshFileBtn = document.getElementById('refresh-file');
     const thresholdInput = document.getElementById('min-viz');
     const fontSizeInput = document.getElementById('font-size');
     const displayCurrencySelect = document.getElementById('display-currency');
@@ -421,7 +423,7 @@
     const modalCloseBtn = document.getElementById('modal-close');
     const downloadRowsBtn = document.getElementById('download-rows');
     const ROW_NUMBER_KEY = '__row_number__';
-    let currentFileName = 'quicken_export.xlsx';
+    let currentFileName = '';
     let modalRowsData = [];
     let lastHeaders = [];
     let modalSort = { key: 'Category', dir: 'asc' };
@@ -439,7 +441,8 @@
     let activeDateKey = null;
     let dateBounds = null;
     let dateFilter = { min: null, max: null };
-    let userSelectedFile = false;
+    let currentFile = null;
+    let refreshFileSelectionPending = false;
     const STORAGE_KEY = 'sankey_user_rows_v1';
     const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
@@ -447,7 +450,6 @@
     if (displayCurrencySelect) displayCurrencySelect.value = DISPLAY_CURRENCY;
     if (extrapolationFactorInput) extrapolationFactorInput.value = EXTRAPOLATION_FACTOR.toFixed(1);
     updateCalendarYearOptions();
-    setCurrentFileName(currentFileName);
     updateThresholdLabel();
 
     if (modalCloseBtn) {
@@ -546,14 +548,14 @@
     }
 
     function setCurrentFileName(name) {
-      currentFileName = name || 'quicken_export.xlsx';
+      currentFileName = name || '';
       if (titleEl) {
-        titleEl.textContent = `Sankey Overview - ${currentFileName}`;
+        titleEl.textContent = currentFileName ? `Quicken Sankey - ${currentFileName}` : 'Quicken Sankey';
       }
       if (fileLabelEl) {
         fileLabelEl.textContent = currentFileName;
       }
-      document.title = `Sankey Overview - ${currentFileName}`;
+      document.title = `Quicken Sankey - ${currentFileName}`;
     }
 
     function setModalHeaders(headers) {
@@ -801,22 +803,11 @@
           minLabel = formatDateInput(new Date(year, 0, 1).getTime());
           maxLabel = formatDateInput(new Date(year, 11, 31).getTime());
         }
-      } else if (preset === 'rolling-12mo') {
-        const maxDate = new Date(dateBounds.max);
-        const minDate = new Date(dateBounds.max);
-        minDate.setMonth(minDate.getMonth() - 12);
-        minLabel = formatDateInput(minDate.getTime());
-        maxLabel = formatDateInput(maxDate.getTime());
-      } else if (preset === 'rolling-24mo') {
-        const maxDate = new Date(dateBounds.max);
-        const minDate = new Date(dateBounds.max);
-        minDate.setMonth(minDate.getMonth() - 24);
-        minLabel = formatDateInput(minDate.getTime());
-        maxLabel = formatDateInput(maxDate.getTime());
-      } else if (preset === 'rolling-36mo') {
+      } else if (preset.startsWith('rolling-')) {
+        const months = Number(preset.match(/^rolling-(12|24|36)mo$/)?.[1]);
         const maxDate = new Date();
         const minDate = new Date(maxDate);
-        minDate.setFullYear(minDate.getFullYear() - 3);
+        minDate.setMonth(minDate.getMonth() - months);
         minLabel = formatDateInput(minDate.getTime());
         maxLabel = formatDateInput(maxDate.getTime());
       } else {
@@ -849,13 +840,56 @@
 
     fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
-      if (!file) return;
-      userSelectedFile = true;
+      if (!file) {
+        refreshFileSelectionPending = false;
+        return;
+      }
+      const preserveDisplayState = refreshFileSelectionPending;
+      refreshFileSelectionPending = false;
+      currentFile = file;
       setCurrentFileName(file.name);
-      statusEl.textContent = `Reading ${file.name}...`;
+      statusEl.textContent = `${preserveDisplayState ? 'Refreshing' : 'Reading'} ${file.name}...`;
       readFileAsArrayBuffer(file)
-        .then(buffer => renderFromArrayBuffer(buffer, file.name))
-        .catch(showError);
+        .then(buffer => renderFromArrayBuffer(buffer, file.name, {
+          preserveDisplayState,
+          preserveChartOnError: preserveDisplayState
+        }))
+        .then(rendered => {
+          if (rendered && preserveDisplayState) statusEl.textContent = `Refreshed ${file.name}.`;
+        })
+        .catch(err => showRefreshError(err, preserveDisplayState));
+    });
+
+    fileInput.addEventListener('cancel', () => {
+      refreshFileSelectionPending = false;
+      statusEl.textContent = currentFileName
+        ? `Refresh canceled. Still showing ${currentFileName}.`
+        : 'Pick a file to render.';
+    });
+
+    refreshFileBtn.addEventListener('click', async () => {
+      if (!currentFileName) {
+        statusEl.textContent = 'Load a file before refreshing.';
+        return;
+      }
+      if (!currentFile) {
+        refreshFileSelectionPending = true;
+        statusEl.textContent = `Select ${currentFileName} again to refresh its data.`;
+        fileInput.click();
+        return;
+      }
+      statusEl.textContent = `Refreshing ${currentFileName}...`;
+      try {
+        const buffer = await readFileAsArrayBuffer(currentFile);
+        const refreshed = await renderFromArrayBuffer(buffer, currentFileName, {
+          preserveDisplayState: true,
+          preserveChartOnError: true
+        });
+        if (!refreshed) return;
+        statusEl.textContent = `Refreshed ${currentFileName}.`;
+      } catch (err) {
+        showRefreshError(err, true);
+      }
     });
 
     function readFileAsArrayBuffer(file) {
@@ -899,7 +933,7 @@
         const payload = {
           rows: Array.isArray(rows) ? rows : [],
           headers: Array.isArray(headers) ? headers : [],
-          fileName: fileName || 'quicken_export.xlsx',
+          fileName: fileName || 'selected_file.xlsx',
           dateKey: dateKey || null,
           dateRange: dateRange || null
         };
@@ -931,8 +965,7 @@
           return true;
         });
         if (!cachedRows.length) return false;
-        userSelectedFile = true;
-        setCurrentFileName(data.fileName || 'quicken_export.xlsx');
+        setCurrentFileName(data.fileName || 'selected_file.xlsx');
         lastHeaders = cachedHeaders;
         const dateKey = data.dateKey || findDateKey(lastHeaders, cachedRows);
         const dateRange = data.dateRange || (dateKey ? getDateRange(cachedRows, dateKey) : null);
@@ -964,20 +997,6 @@
         });
       }
       return rows;
-    }
-
-    async function loadDefaultWorkbook() {
-      if (userSelectedFile) return;
-      try {
-        const resp = await fetch('quicken_export.xlsx');
-        if (!resp.ok) throw new Error('Default workbook not found.');
-        const buffer = await resp.arrayBuffer();
-        if (userSelectedFile) return;
-        await renderFromArrayBuffer(buffer, 'quicken_export.xlsx', { isDefault: true });
-      } catch (err) {
-        statusEl.textContent = 'Pick a file to render.';
-        setPlaceholder('No chart yet. If you opened this file directly, the browser may block loading quicken_export.xlsx. Start a local server (e.g. `python -m http.server 8000`) or use “Load another file”.');
-      }
     }
 
     thresholdInput.addEventListener('change', () => {
@@ -1038,23 +1057,48 @@
       }
     });
 
-    async function renderFromArrayBuffer(buffer, fileName = 'quicken_export.xlsx', opts = {}) {
-      const isDefault = opts && opts.isDefault;
-      if (isDefault && userSelectedFile) return;
+    async function renderFromArrayBuffer(buffer, fileName = 'selected_file.xlsx', opts = {}) {
       try {
+        const preservedState = opts.preserveDisplayState ? {
+          suppressedRowNumbers: new Set(suppressedRowNumbers),
+          minDate: minDateInput?.value || '',
+          maxDate: maxDateInput?.value || '',
+          dateRange: dateRangeSelect?.value || 'all',
+          customDateOptionHidden: dateRangeCustomOption?.hidden ?? true
+        } : null;
         const workbook = XLSX.read(buffer, { type: 'array' });
         const { expenses, headers, dateKey, dateRange } = extractRows(workbook);
         setDateControls(dateKey, dateRange);
         setBaseRows(expenses);
+        if (preservedState) {
+          suppressedRowNumbers = preservedState.suppressedRowNumbers;
+          window.__suppressedRowNumbers = suppressedRowNumbers;
+          if (activeDateKey && preservedState.minDate && preservedState.maxDate) {
+            minDateInput.value = preservedState.minDate;
+            maxDateInput.value = preservedState.maxDate;
+            const min = parseDateInputValue(preservedState.minDate, false);
+            const max = parseDateInputValue(preservedState.maxDate, true);
+            if (Number.isFinite(min) && Number.isFinite(max)) {
+              dateFilter = { min, max };
+            }
+            if (dateRangeSelect) dateRangeSelect.value = preservedState.dateRange;
+            if (dateRangeCustomOption) {
+              dateRangeCustomOption.hidden = preservedState.customDateOptionHidden;
+            }
+          }
+        }
         lastHeaders = headers;
         renderFromRows();
         setCurrentFileName(fileName);
-        if (!isDefault) {
-          userSelectedFile = true;
-          saveUserState(expenses, headers, fileName, dateKey, dateRange);
-        }
+        saveUserState(expenses, headers, fileName, dateKey, dateRange);
+        return true;
       } catch (err) {
-        showError(err);
+        if (opts.preserveChartOnError) {
+          showRefreshError(err, true);
+        } else {
+          showError(err);
+        }
+        return false;
       }
     }
 
@@ -1072,7 +1116,7 @@
       if (!activeRows.length) {
         window.__lastSankeyData = null;
         clearChart();
-        setPlaceholder('No data to render. Suppress fewer nodes or load another file.');
+        setPlaceholder('No data to render. Suppress fewer nodes or load a file.');
         if (dateFilterActive && unsuppressedRows.length) {
           statusEl.textContent = 'No rows in the selected date range.';
         } else {
@@ -1552,7 +1596,7 @@
 
       node.append('text')
         .attr('x', d => d.name === 'Expenses' ? (d.x1 - d.x0) + 6 : -6)
-        .attr('y', d => (d.y1 - d.y0) / 2)
+        .attr('y', d => (d.y1 - d.y0) * (d.name === 'Expenses' ? 0.3 : 0.5))
         .attr('dy', '0.35em')
         .attr('text-anchor', d => d.name === 'Expenses' ? 'start' : 'end')
         .style('font-size', `${FONT_SIZE}px`)
@@ -1604,12 +1648,24 @@
         const rowNum = Number.isFinite(row.rowNumber) ? row.rowNumber : idx + 1;
         const cells = [rowNum, ...effectiveHeaders.map(h => row.raw ? row.raw[h] : row[h])];
         tr.innerHTML = cells.map((val, cellIdx) => {
-          const safe = escapeHtml(val == null ? '' : String(val));
+          const header = cellIdx > 0 ? effectiveHeaders[cellIdx - 1] : ROW_NUMBER_KEY;
+          const safe = escapeHtml(formatModalCellValue(header, val));
           return `<td${cellIdx === 1 ? ' class=\"category\"' : ''}>${safe}</td>`;
         }).join('');
         frag.appendChild(tr);
       });
       modalRowsBody.appendChild(frag);
+    }
+
+    function formatModalCellValue(header, value) {
+      if (value == null) return '';
+      if (header === 'AmountUSD' || header === 'AmountNZD') {
+        const amount = Number(value);
+        if (Number.isFinite(amount)) {
+          return amount.toLocaleString('en-US', { maximumFractionDigits: 20 });
+        }
+      }
+      return String(value);
     }
 
     function hideModal() {
@@ -1974,7 +2030,15 @@
     function showError(err) {
       console.error(err);
       statusEl.textContent = err.message || 'Failed to render.';
-      setPlaceholder('Unable to render chart. Please use “Load another file” or serve this directory (e.g. `python -m http.server 8000`).');
+      setPlaceholder('Unable to render chart. Please use “Load file” or serve this directory (e.g. `python -m http.server 8000`).');
+    }
+
+    function showRefreshError(err, preserveChart = false) {
+      console.error(err);
+      statusEl.textContent = err?.message || 'Failed to refresh the file.';
+      if (!preserveChart || !window.__lastSankeyData) {
+        setPlaceholder('Unable to refresh the file. Use “Load file” to select it again.');
+      }
     }
 
     function setPlaceholder(text) {
@@ -1989,7 +2053,7 @@
 
     const restored = tryRestoreUserState();
     if (!restored) {
-      loadDefaultWorkbook();
+      setPlaceholder('No chart yet. Use “Load file” to select a workbook.');
     }
   </script>
 </body>
