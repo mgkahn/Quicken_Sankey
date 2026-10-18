@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Quicken Sankey</title>
-  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js" integrity="sha384-SM54CE5h+qdDI046d2Y5ym7wq1kq4uxcQ1cqGq5/+5jrE5tPLeDJSq711Q8sIska" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous"></script>
   <style>
     :root {
       --bg: #f5f6fb;
@@ -197,7 +197,8 @@
     }
     .modal-actions {
       display: flex;
-      justify-content: flex-end;
+      justify-content: space-between;
+      align-items: center;
       padding: 12px 18px;
       gap: 10px;
       border-bottom: 1px solid #e5e7eb;
@@ -351,8 +352,8 @@
     <div class="tooltip" id="tooltip"></div>
   </div>
 
-  <div class="modal-backdrop" id="details-backdrop">
-    <div class="modal">
+  <div class="modal-backdrop" id="details-backdrop" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-subtitle" tabindex="-1">
       <div class="modal-header">
         <div>
           <div class="modal-title" id="modal-title">Category details</div>
@@ -361,13 +362,21 @@
         <button class="modal-close" id="modal-close" aria-label="Close details">&times;</button>
       </div>
       <div class="modal-actions">
+        <div class="status" id="modal-page-status" aria-live="polite"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" id="modal-first" type="button">First</button>
+          <button class="btn" id="modal-prev" type="button">Previous</button>
+          <button class="btn" id="modal-next" type="button">Next</button>
+          <button class="btn" id="modal-last" type="button">Last</button>
+        </div>
         <button class="btn" id="download-rows" type="button">Download rows (CSV)</button>
       </div>
       <div class="modal-table-wrap">
         <table class="modal-table">
           <thead>
             <tr id="modal-header-row">
-              <th>Row #</th>
+              <th>Display Row</th>
+              <th>Export Row #</th>
               <th>Category</th>
               <th>AmountUSD</th>
             </tr>
@@ -422,9 +431,18 @@
     const modalEmpty = document.getElementById('modal-empty');
     const modalCloseBtn = document.getElementById('modal-close');
     const downloadRowsBtn = document.getElementById('download-rows');
+    const modalFirstBtn = document.getElementById('modal-first');
+    const modalPrevBtn = document.getElementById('modal-prev');
+    const modalNextBtn = document.getElementById('modal-next');
+    const modalLastBtn = document.getElementById('modal-last');
+    const modalPageStatus = document.getElementById('modal-page-status');
+    const DISPLAY_ROW_KEY = '__display_row__';
     const ROW_NUMBER_KEY = '__row_number__';
     let currentFileName = '';
     let modalRowsData = [];
+    let modalPage = 0;
+    let modalPreviouslyFocused = null;
+    const MODAL_PAGE_SIZE = 250;
     let lastHeaders = [];
     let modalSort = { key: 'Category', dir: 'asc' };
     let isModalDragging = false;
@@ -443,7 +461,10 @@
     let dateFilter = { min: null, max: null };
     let currentFile = null;
     let refreshFileSelectionPending = false;
-    const STORAGE_KEY = 'sankey_user_rows_v1';
+    const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
+    const MAX_WORKSHEET_ROWS = 50000;
+    const MAX_WORKSHEET_COLUMNS = 200;
+    let lastSankeyData = null;
     const formatNumber = d3.format(',.0f');
     thresholdInput.value = MIN_VIZ;
     fontSizeInput.value = FONT_SIZE;
@@ -454,6 +475,35 @@
 
     if (modalCloseBtn) {
       modalCloseBtn.addEventListener('click', hideModal);
+    }
+    if (modalFirstBtn) {
+      modalFirstBtn.addEventListener('click', () => {
+        if (modalPage === 0) return;
+        modalPage = 0;
+        renderModalRows(modalRowsData, lastHeaders, false);
+      });
+    }
+    if (modalPrevBtn) {
+      modalPrevBtn.addEventListener('click', () => {
+        if (modalPage <= 0) return;
+        modalPage -= 1;
+        renderModalRows(modalRowsData, lastHeaders, false);
+      });
+    }
+    if (modalNextBtn) {
+      modalNextBtn.addEventListener('click', () => {
+        if ((modalPage + 1) * MODAL_PAGE_SIZE >= modalRowsData.length) return;
+        modalPage += 1;
+        renderModalRows(modalRowsData, lastHeaders, false);
+      });
+    }
+    if (modalLastBtn) {
+      modalLastBtn.addEventListener('click', () => {
+        const lastPage = Math.max(0, Math.ceil(modalRowsData.length / MODAL_PAGE_SIZE) - 1);
+        if (modalPage === lastPage) return;
+        modalPage = lastPage;
+        renderModalRows(modalRowsData, lastHeaders, false);
+      });
     }
     if (modalBackdrop) {
       modalBackdrop.addEventListener('click', (e) => {
@@ -474,6 +524,7 @@
     document.addEventListener('pointerup', () => {
       isModalPointerDown = false;
     });
+    document.addEventListener('keydown', handleModalKeydown);
     if (modalResizer && modalEl) {
       modalResizer.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) return;
@@ -503,8 +554,36 @@
           key,
           dir: modalSort.key === key && modalSort.dir === 'asc' ? 'desc' : 'asc'
         };
+        modalPage = 0;
         renderModalRows(modalRowsData, lastHeaders);
       });
+    }
+
+    function handleModalKeydown(event) {
+      if (!modalBackdrop || modalBackdrop.style.display !== 'flex') return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        hideModal();
+        return;
+      }
+      if (event.key !== 'Tab' || !modalEl) return;
+      const focusable = Array.from(modalEl.querySelectorAll(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focusable.length) {
+        event.preventDefault();
+        modalEl.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     }
     if (resetSuppressedBtn) {
       resetSuppressedBtn.addEventListener('click', () => {
@@ -517,7 +596,6 @@
           return;
         }
         suppressedRowNumbers.clear();
-        window.__suppressedRowNumbers = suppressedRowNumbers;
         renderFromRows();
       });
     }
@@ -561,13 +639,16 @@
     function setModalHeaders(headers) {
       if (!modalHeaderRow) return;
       const cols = [
-        { label: 'Export Row #', key: ROW_NUMBER_KEY },
-        ...(headers || []).map(h => ({ label: h, key: String(h || '') }))
+        { label: 'Display Row', key: DISPLAY_ROW_KEY, sortable: false },
+        { label: 'Export Row #', key: ROW_NUMBER_KEY, sortable: true },
+        ...(headers || []).map(h => ({ label: h, key: String(h || ''), sortable: true }))
       ];
       modalHeaderRow.innerHTML = cols.map((col) => {
         const isActive = modalSort && modalSort.key === col.key;
         const indicator = isActive ? (modalSort.dir === 'asc' ? ' ^' : ' v') : '';
-        return `<th class="sortable${isActive ? ' is-sorted' : ''}" data-key="${escapeHtml(String(col.key))}">${escapeHtml(String(col.label || ''))}${indicator}</th>`;
+        const className = col.sortable ? ` class="sortable${isActive ? ' is-sorted' : ''}"` : '';
+        const dataKey = col.sortable ? ` data-key="${escapeHtml(String(col.key))}"` : '';
+        return `<th${className}${dataKey}>${escapeHtml(String(col.label || ''))}${indicator}</th>`;
       }).join('');
     }
 
@@ -893,9 +974,32 @@
     });
 
     function readFileAsArrayBuffer(file) {
+      if (!/\.xlsx$/i.test(file.name || '')) {
+        return Promise.reject(new Error('Unsupported file type. Select an .xlsx workbook.'));
+      }
+      const allowedTypes = new Set([
+        '',
+        'application/octet-stream',
+        'application/zip',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      ]);
+      if (!allowedTypes.has(file.type || '')) {
+        return Promise.reject(new Error('Unsupported file type. Select an .xlsx workbook.'));
+      }
+      if (file.size > MAX_FILE_SIZE_BYTES) {
+        return Promise.reject(new Error('Workbook is too large. The maximum supported size is 20 MB.'));
+      }
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = (evt) => resolve(evt.target.result);
+        reader.onload = (evt) => {
+          const buffer = evt.target.result;
+          const signature = new Uint8Array(buffer, 0, Math.min(4, buffer.byteLength));
+          if (signature.length < 4 || signature[0] !== 0x50 || signature[1] !== 0x4b) {
+            reject(new Error('The selected file is not a valid .xlsx workbook.'));
+            return;
+          }
+          resolve(buffer);
+        };
         reader.onerror = (err) => reject(err);
         reader.readAsArrayBuffer(file);
       });
@@ -913,9 +1017,6 @@
         });
       }
       suppressedRowNumbers = new Set();
-      window.__baseRows = baseRows;
-      window.__suppressedRowNumbers = suppressedRowNumbers;
-      window.__lastRows = baseRows;
     }
 
     function updateBaseRowAmounts() {
@@ -925,59 +1026,6 @@
           row.amount = Math.abs(rawAmount) * EXTRAPOLATION_FACTOR;
         }
       });
-    }
-
-    function saveUserState(rows, headers, fileName, dateKey, dateRange) {
-      if (!window.sessionStorage) return;
-      try {
-        const payload = {
-          rows: Array.isArray(rows) ? rows : [],
-          headers: Array.isArray(headers) ? headers : [],
-          fileName: fileName || 'selected_file.xlsx',
-          dateKey: dateKey || null,
-          dateRange: dateRange || null
-        };
-        sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-      } catch (err) {
-        console.warn('Unable to persist user-selected data file.', err);
-      }
-    }
-
-    function tryRestoreUserState() {
-      if (!window.sessionStorage) return false;
-      const raw = sessionStorage.getItem(STORAGE_KEY);
-      if (!raw) return false;
-      try {
-        const data = JSON.parse(raw);
-        if (!data || !Array.isArray(data.rows) || !data.rows.length) return false;
-        const cachedHeaders = normalizeCurrencyHeaders(data.headers || []);
-        const cachedRows = data.rows.map((row) => {
-          const raw = normalizeCurrencyRow(row?.raw || row || {});
-          const displayAmount = getDisplayAmount(raw);
-          return {
-            ...row,
-            raw,
-            amount: Number.isFinite(displayAmount) ? Math.abs(displayAmount) : row.amount
-          };
-        }).filter((row) => {
-          const rawAmount = getDisplayAmount(row?.raw);
-          if (Number.isFinite(rawAmount)) return rawAmount < 0;
-          return true;
-        });
-        if (!cachedRows.length) return false;
-        setCurrentFileName(data.fileName || 'selected_file.xlsx');
-        lastHeaders = cachedHeaders;
-        const dateKey = data.dateKey || findDateKey(lastHeaders, cachedRows);
-        const dateRange = data.dateRange || (dateKey ? getDateRange(cachedRows, dateKey) : null);
-        setDateControls(dateKey, dateRange);
-        setBaseRows(cachedRows);
-        renderFromRows();
-        statusEl.textContent = `Loaded cached data from ${data.fileName || 'selected file'}.`;
-        return true;
-      } catch (err) {
-        console.warn('Unable to restore cached data.', err);
-        return false;
-      }
     }
 
     function getActiveRows() {
@@ -1066,13 +1114,15 @@
           dateRange: dateRangeSelect?.value || 'all',
           customDateOptionHidden: dateRangeCustomOption?.hidden ?? true
         } : null;
-        const workbook = XLSX.read(buffer, { type: 'array' });
+        if (!(buffer instanceof ArrayBuffer) || buffer.byteLength > MAX_FILE_SIZE_BYTES) {
+          throw new Error('Workbook is too large. The maximum supported size is 20 MB.');
+        }
+        const workbook = XLSX.read(buffer, { type: 'array', sheetRows: MAX_WORKSHEET_ROWS + 1 });
         const { expenses, headers, dateKey, dateRange } = extractRows(workbook);
         setDateControls(dateKey, dateRange);
         setBaseRows(expenses);
         if (preservedState) {
           suppressedRowNumbers = preservedState.suppressedRowNumbers;
-          window.__suppressedRowNumbers = suppressedRowNumbers;
           if (activeDateKey && preservedState.minDate && preservedState.maxDate) {
             minDateInput.value = preservedState.minDate;
             maxDateInput.value = preservedState.maxDate;
@@ -1090,7 +1140,6 @@
         lastHeaders = headers;
         renderFromRows();
         setCurrentFileName(fileName);
-        saveUserState(expenses, headers, fileName, dateKey, dateRange);
         return true;
       } catch (err) {
         if (opts.preserveChartOnError) {
@@ -1112,9 +1161,8 @@
       const dateFilteredOut = dateFilterActive
         ? Math.max(0, unsuppressedRows.length - activeRows.length)
         : 0;
-      window.__lastRows = activeRows;
       if (!activeRows.length) {
-        window.__lastSankeyData = null;
+        lastSankeyData = null;
         clearChart();
         setPlaceholder('No data to render. Suppress fewer nodes or load a file.');
         if (dateFilterActive && unsuppressedRows.length) {
@@ -1129,7 +1177,7 @@
       const tree = buildHierarchy(activeRows);
       collapseSmallNodes(tree);
       const sankeyData = treeToSankey(tree);
-      window.__lastSankeyData = sankeyData;
+      lastSankeyData = sankeyData;
       drawChart(sankeyData);
       statusEl.textContent = `Rendered ${activeRows.length} expense rows (min threshold $${MIN_VIZ})${suppressedCount ? `, suppressed ${suppressedCount}` : ''}${dateFilteredOut ? `, filtered ${dateFilteredOut} by date` : ''}.`;
     }
@@ -1138,7 +1186,6 @@
       const container = document.getElementById('chart');
       if (!container) return;
       container.querySelectorAll('svg').forEach(el => el.remove());
-      window.__lastSvg = null;
     }
 
     function normalizeCellValue(key, val) {
@@ -1365,10 +1412,25 @@
 
     function extractRows(workbook) {
       const firstSheet = workbook.SheetNames[0];
+      if (!firstSheet) throw new Error('The workbook does not contain any worksheets.');
       const sheet = workbook.Sheets[firstSheet];
+      if (!sheet || !sheet['!ref']) throw new Error('The first worksheet is empty.');
+      const range = XLSX.utils.decode_range(sheet['!fullref'] || sheet['!ref']);
+      const rowCount = range.e.r - range.s.r + 1;
+      const columnCount = range.e.c - range.s.c + 1;
+      if (rowCount > MAX_WORKSHEET_ROWS) {
+        throw new Error(`Worksheet has too many rows. The maximum supported count is ${MAX_WORKSHEET_ROWS.toLocaleString('en-US')}.`);
+      }
+      if (columnCount > MAX_WORKSHEET_COLUMNS) {
+        throw new Error(`Worksheet has too many columns. The maximum supported count is ${MAX_WORKSHEET_COLUMNS}.`);
+      }
       const headerRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true, cellDates: true });
       const trimmedRows = trimQuickenRows(headerRows);
       const headerRow = Array.isArray(trimmedRows[0]) ? trimmedRows[0] : [];
+      const sourceHeaders = new Set(headerRow.map(header => String(header || '').trim()));
+      if (!sourceHeaders.has('Category') || (!sourceHeaders.has('Amount') && !sourceHeaders.has('AmountUSD'))) {
+        throw new Error('Worksheet must contain Category and Amount or AmountUSD columns.');
+      }
       const headers = normalizeCurrencyHeaders(headerRow);
       const accountColIndex = findHeaderColumnIndex(trimmedRows, 'Account');
       const categoryColIndex = findHeaderColumnIndex(trimmedRows, 'Category');
@@ -1418,7 +1480,7 @@
     }
 
     function makeNode(name, path = name) {
-      return { name, path, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [], rows: [] };
+      return { name, path, value: 0, children: new Map(), aggregated: false, aggregatedDetails: [], rowNumbers: [] };
     }
 
     function buildHierarchy(rows) {
@@ -1435,7 +1497,7 @@
           currentPath = childPath;
         }
         current.value += row.amount;
-        current.rows.push(row);
+        current.rowNumbers.push(row.rowNumber);
       }
       propagateTotals(root);
       root.value = Array.from(root.children.values()).reduce((sum, child) => sum + child.value, 0);
@@ -1446,8 +1508,8 @@
       for (const child of node.children.values()) {
         propagateTotals(child);
         node.value += child.value;
-        if (child.rows && child.rows.length) {
-          node.rows.push(...child.rows);
+        if (child.rowNumbers && child.rowNumbers.length) {
+          node.rowNumbers.push(...child.rowNumbers);
         }
       }
     }
@@ -1472,7 +1534,7 @@
         otherNode.value = otherValue;
         otherNode.aggregated = true;
         otherNode.aggregatedDetails = small.map(c => ({ name: c.name, value: c.value }));
-        otherNode.rows = small.flatMap(c => c.rows || []);
+        otherNode.rowNumbers = small.flatMap(c => c.rowNumbers || []);
         keepers.push(otherNode);
       } else if (small.length === 1) {
         // Do not aggregate or recurse a lone small node; keep it as-is
@@ -1494,7 +1556,7 @@
           value: node.value,
           aggregated: node.aggregated,
           aggregatedDetails: node.aggregatedDetails ? [...node.aggregatedDetails] : [],
-          rows: node.rows ? [...node.rows] : [],
+          rowNumbers: node.rowNumbers ? [...node.rowNumbers] : [],
           depth
         });
         return idx;
@@ -1602,19 +1664,19 @@
         .style('font-size', `${FONT_SIZE}px`)
         .text(d => `${d.name}: $${formatValue(d.value)} ${getDisplayCurrencyLabel()}`);
 
-      window.__lastSvg = svg.node();
       setPlaceholder('');
     }
 
     function showNodeDetails(node) {
       if (!node || !modalBackdrop) return;
-      const rows = Array.isArray(node.rows) ? [...node.rows] : [];
+      const rows = getNodeRows(node);
       rows.sort((a, b) => {
         const aNum = Number.isFinite(a.rowNumber) ? a.rowNumber : 0;
         const bNum = Number.isFinite(b.rowNumber) ? b.rowNumber : 0;
         return aNum - bNum;
       });
       modalSort = { key: 'Category', dir: 'asc' };
+      modalPage = 0;
       modalRowsData = rows;
       if (modalTitle) {
         modalTitle.textContent = `${node.name}`;
@@ -1624,33 +1686,59 @@
         modalSubtitle.textContent = `${rows.length} ${rowLabel} - Total $${formatNumber(node.value || 0)} ${getDisplayCurrencyLabel()}`;
       }
       renderModalRows(rows, lastHeaders);
+      modalPreviouslyFocused = document.activeElement;
       modalBackdrop.style.display = 'flex';
+      modalBackdrop.setAttribute('aria-hidden', 'false');
       requestAnimationFrame(normalizeModalPosition);
+      requestAnimationFrame(() => modalCloseBtn?.focus());
     }
 
-    function renderModalRows(rows, headers = []) {
+    function renderModalRows(rows, headers = [], resetSort = true) {
       if (!modalRowsBody || !modalEmpty) return;
       const effectiveHeaders = (headers && headers.length)
         ? headers
         : (rows[0]?.raw ? Object.keys(rows[0].raw) : []);
       setModalHeaders(effectiveHeaders);
-      const sortedRows = sortModalRows(rows, effectiveHeaders);
+      const sortedRows = resetSort ? sortModalRows(rows, effectiveHeaders) : rows.slice();
       modalRowsData = sortedRows;
       modalRowsBody.innerHTML = '';
       if (!sortedRows.length) {
         modalEmpty.style.display = 'block';
+        if (modalPageStatus) modalPageStatus.textContent = 'No rows';
+        if (modalFirstBtn) modalFirstBtn.disabled = true;
+        if (modalPrevBtn) modalPrevBtn.disabled = true;
+        if (modalNextBtn) modalNextBtn.disabled = true;
+        if (modalLastBtn) modalLastBtn.disabled = true;
         return;
       }
       modalEmpty.style.display = 'none';
+      const totalPages = Math.max(1, Math.ceil(sortedRows.length / MODAL_PAGE_SIZE));
+      modalPage = Math.min(modalPage, totalPages - 1);
+      const pageStart = modalPage * MODAL_PAGE_SIZE;
+      const pageRows = sortedRows.slice(pageStart, pageStart + MODAL_PAGE_SIZE);
+      if (modalPageStatus) {
+        modalPageStatus.textContent = `Showing ${pageStart + 1}-${pageStart + pageRows.length} of ${sortedRows.length} rows`;
+      }
+      const isFirstPage = modalPage === 0;
+      const isLastPage = modalPage >= totalPages - 1;
+      if (modalFirstBtn) modalFirstBtn.disabled = isFirstPage;
+      if (modalPrevBtn) modalPrevBtn.disabled = isFirstPage;
+      if (modalNextBtn) modalNextBtn.disabled = isLastPage;
+      if (modalLastBtn) modalLastBtn.disabled = isLastPage;
       const frag = document.createDocumentFragment();
-      sortedRows.forEach((row, idx) => {
+      pageRows.forEach((row, idx) => {
         const tr = document.createElement('tr');
-        const rowNum = Number.isFinite(row.rowNumber) ? row.rowNumber : idx + 1;
-        const cells = [rowNum, ...effectiveHeaders.map(h => row.raw ? row.raw[h] : row[h])];
+        const displayRowNum = pageStart + idx + 1;
+        const rowNum = Number.isFinite(row.rowNumber) ? row.rowNumber : pageStart + idx + 1;
+        const cells = [displayRowNum, rowNum, ...effectiveHeaders.map(h => row.raw ? row.raw[h] : row[h])];
         tr.innerHTML = cells.map((val, cellIdx) => {
-          const header = cellIdx > 0 ? effectiveHeaders[cellIdx - 1] : ROW_NUMBER_KEY;
+          const header = cellIdx === 0
+            ? DISPLAY_ROW_KEY
+            : cellIdx === 1
+              ? ROW_NUMBER_KEY
+              : effectiveHeaders[cellIdx - 2];
           const safe = escapeHtml(formatModalCellValue(header, val));
-          return `<td${cellIdx === 1 ? ' class=\"category\"' : ''}>${safe}</td>`;
+          return `<td${header === 'Category' ? ' class=\"category\"' : ''}>${safe}</td>`;
         }).join('');
         frag.appendChild(tr);
       });
@@ -1669,8 +1757,22 @@
     }
 
     function hideModal() {
-      if (modalBackdrop) modalBackdrop.style.display = 'none';
+      if (modalBackdrop) {
+        modalBackdrop.style.display = 'none';
+        modalBackdrop.setAttribute('aria-hidden', 'true');
+      }
       modalRowsData = [];
+      modalPage = 0;
+      if (modalPreviouslyFocused && typeof modalPreviouslyFocused.focus === 'function') {
+        modalPreviouslyFocused.focus();
+      }
+      modalPreviouslyFocused = null;
+    }
+
+    function getNodeRows(node) {
+      if (!node || !Array.isArray(node.rowNumbers) || !node.rowNumbers.length) return [];
+      const wanted = new Set(node.rowNumbers);
+      return getActiveRows().filter(row => wanted.has(row.rowNumber));
     }
 
     function downloadRowsCsv(rows, filename = 'sankey_data.csv', headers = lastHeaders) {
@@ -1697,14 +1799,13 @@
     }
 
     function suppressNodeRows(node) {
-      if (!node || !Array.isArray(node.rows) || !node.rows.length) return;
+      if (!node || !Array.isArray(node.rowNumbers) || !node.rowNumbers.length) return;
       if (!baseRows.length) return;
-      node.rows.forEach(r => {
-        if (r && Number.isFinite(r.rowNumber)) {
-          suppressedRowNumbers.add(r.rowNumber);
+      node.rowNumbers.forEach(rowNumber => {
+        if (Number.isFinite(rowNumber)) {
+          suppressedRowNumbers.add(rowNumber);
         }
       });
-      window.__suppressedRowNumbers = suppressedRowNumbers;
       renderFromRows();
     }
 
@@ -1713,9 +1814,9 @@
         event.preventDefault();
         event.stopPropagation();
       }
-      if (!node || !Array.isArray(node.rows) || !node.rows.length) return;
+      if (!node || !Array.isArray(node.rowNumbers) || !node.rowNumbers.length) return;
       if (node.name === 'Expenses') return;
-      const rowCount = node.rows.length;
+      const rowCount = node.rowNumbers.length;
       const label = node.path || node.name;
       const confirmMsg = `Suppress "${label}" and all descendant rows (${rowCount} row${rowCount === 1 ? '' : 's'})?`;
       const confirmed = window.confirm(confirmMsg);
@@ -1936,7 +2037,11 @@
 
     function csvEscape(val) {
       if (val == null) return '';
-      const str = String(val);
+      let str = String(val);
+      // Prevent spreadsheet applications from evaluating imported text as formulas.
+      if (typeof val === 'string' && /^[\t\r ]*[=+\-@]/.test(str)) {
+        str = `'${str}`;
+      }
       if (/[\",\n]/.test(str)) {
         return `"${str.replace(/\"/g, '""')}"`;
       }
@@ -2036,7 +2141,7 @@
     function showRefreshError(err, preserveChart = false) {
       console.error(err);
       statusEl.textContent = err?.message || 'Failed to refresh the file.';
-      if (!preserveChart || !window.__lastSankeyData) {
+      if (!preserveChart || !lastSankeyData) {
         setPlaceholder('Unable to refresh the file. Use “Load file” to select it again.');
       }
     }
@@ -2048,13 +2153,16 @@
     }
 
     window.addEventListener('resize', () => {
-      if (window.__lastSankeyData) drawChart(window.__lastSankeyData);
+      if (lastSankeyData) drawChart(lastSankeyData);
     });
 
-    const restored = tryRestoreUserState();
-    if (!restored) {
-      setPlaceholder('No chart yet. Use “Load file” to select a workbook.');
+    // Remove data persisted by earlier versions; transaction rows now remain in memory only.
+    try {
+      window.sessionStorage?.removeItem('sankey_user_rows_v1');
+    } catch (err) {
+      console.warn('Unable to clear legacy cached workbook data.', err);
     }
+    setPlaceholder('No chart yet. Use “Load file” to select a workbook.');
   </script>
 </body>
 </html>
